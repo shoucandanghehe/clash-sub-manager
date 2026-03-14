@@ -1,0 +1,20 @@
+# Python cache and virtualenvs
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local runtime artifacts
+*.db
+local/
+
+# Frontend local dependencies
+src/clash_sub_manager/webui/node_modules/
+
+# Local tool metadata
+AGENTS.md
+.worktrees/
+.python-version
+src/clash_sub_manager/webui/dist/
