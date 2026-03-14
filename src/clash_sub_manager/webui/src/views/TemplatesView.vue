@@ -11,9 +11,19 @@ import type {
   TemplatePayload,
   TemplateRecord,
 } from '../api'
+import StructuredValueEditor from '../components/StructuredValueEditor.vue'
+import {
+  createStructuredValueNode,
+  setStructuredValueKind,
+  structuredValueNodeFromUnknown,
+  structuredValueNodeToUnknown,
+  type StructuredValueFactory,
+  type StructuredValueNode,
+} from '../components/structuredValue'
 import { useManagerStore } from '../stores/manager'
 
 type TemplateTab = 'templates' | 'patches' | 'composites'
+type PatchOperationKind = TemplatePatchOperation['op']
 
 interface TemplateForm {
   name: string
@@ -24,7 +34,7 @@ interface TemplateForm {
 interface TemplatePatchForm {
   name: string
   description: string
-  operationsText: string
+  operations: LowCodePatchOperationRow[]
 }
 
 interface CompositeTemplateForm {
@@ -33,18 +43,43 @@ interface CompositeTemplateForm {
   patchSequence: number[]
 }
 
+interface LowCodePatchOperationRow {
+  id: number
+  op: PatchOperationKind
+  path: string
+  valueEditor: StructuredValueNode
+  indexText: string
+  useOldValue: boolean
+  oldValueEditor: StructuredValueNode
+}
+
+interface PatchOperationOption {
+  title: string
+  value: PatchOperationKind
+  description: string
+}
+
 const DEFAULT_TEMPLATE = 'proxies: []\nproxy-groups: []\nrules: []\n'
-const DEFAULT_PATCH_OPERATIONS = JSON.stringify(
-  [
-    {
-      op: 'list_append',
-      path: 'proxy-groups.0.proxies',
-      value: 'DIRECT',
-    },
-  ],
-  null,
-  2,
-)
+
+const PATCH_OPERATION_OPTIONS: PatchOperationOption[] = [
+  { value: 'set', title: 'set', description: '替换指定路径的值' },
+  { value: 'delete', title: 'delete', description: '删除指定路径的值' },
+  { value: 'merge', title: 'merge', description: '向对象做深度合并' },
+  { value: 'list_append', title: 'list_append', description: '向列表末尾追加元素' },
+  { value: 'list_insert', title: 'list_insert', description: '向列表指定位置插入元素' },
+  { value: 'list_remove', title: 'list_remove', description: '从列表移除匹配元素' },
+  { value: 'list_replace', title: 'list_replace', description: '替换列表指定下标元素' },
+]
+
+const VALUE_REQUIRED_OPERATIONS = new Set<PatchOperationKind>([
+  'set',
+  'merge',
+  'list_append',
+  'list_insert',
+  'list_remove',
+  'list_replace',
+])
+const INDEX_REQUIRED_OPERATIONS = new Set<PatchOperationKind>(['list_insert', 'list_replace'])
 
 const store = useManagerStore()
 const {
@@ -59,6 +94,10 @@ const {
 } = storeToRefs(store)
 
 const activeTab = ref<TemplateTab>('templates')
+const nextPatchOperationId = ref(1)
+const valueFactory: StructuredValueFactory = {
+  nextId: () => nextPatchOperationId.value++,
+}
 
 const templateDialog = ref(false)
 const templateEditingId = ref<number | null>(null)
@@ -76,7 +115,7 @@ const patchPreviewTemplateId = ref<number | null>(null)
 const patchForm = reactive<TemplatePatchForm>({
   name: '',
   description: '',
-  operationsText: DEFAULT_PATCH_OPERATIONS,
+  operations: [],
 })
 
 const compositeDialog = ref(false)
@@ -125,8 +164,29 @@ const canSubmitTemplate = computed(() => {
   return templateForm.name.trim().length > 0 && templateForm.content.trim().length > 0
 })
 
+const patchValidationMessage = computed(() => {
+  try {
+    buildPatchOperationsFromForm()
+    return ''
+  } catch (caught) {
+    return caught instanceof Error ? caught.message : '补丁配置无效。'
+  }
+})
+
 const canSubmitPatch = computed(() => {
-  return patchForm.name.trim().length > 0 && patchForm.operationsText.trim().length > 0
+  return patchForm.name.trim().length > 0 && patchValidationMessage.value === ''
+})
+
+const generatedPatchJson = computed(() => {
+  if (patchForm.operations.length === 0) {
+    return '[]'
+  }
+
+  try {
+    return JSON.stringify(buildPatchOperationsFromForm(), null, 2)
+  } catch (caught) {
+    return caught instanceof Error ? caught.message : '补丁配置无效。'
+  }
 })
 
 const canSubmitComposite = computed(() => {
@@ -210,23 +270,69 @@ watch(
   { immediate: true },
 )
 
+function requiresValue(op: PatchOperationKind): boolean {
+  return VALUE_REQUIRED_OPERATIONS.has(op)
+}
+
+function requiresIndex(op: PatchOperationKind): boolean {
+  return INDEX_REQUIRED_OPERATIONS.has(op)
+}
+
+function operationDescription(op: PatchOperationKind): string {
+  return PATCH_OPERATION_OPTIONS.find((option) => option.value === op)?.description ?? ''
+}
+
+function defaultValueNodeForOperation(op: PatchOperationKind): StructuredValueNode {
+  return createStructuredValueNode(valueFactory, op === 'merge' ? 'object' : 'string')
+}
+
+function patchRowFromOperation(operation: TemplatePatchOperation): LowCodePatchOperationRow {
+  return {
+    id: nextPatchOperationId.value++,
+    op: operation.op,
+    path: operation.path,
+    valueEditor: 'value' in operation ? structuredValueNodeFromUnknown(valueFactory, operation.value) : defaultValueNodeForOperation(operation.op),
+    indexText: typeof operation.index === 'number' ? String(operation.index) : '',
+    useOldValue: 'old_value' in operation,
+    oldValueEditor: 'old_value' in operation ? structuredValueNodeFromUnknown(valueFactory, operation.old_value) : createStructuredValueNode(valueFactory),
+  }
+}
+
 function formatOperations(operations: TemplatePatchOperation[]): string {
   return JSON.stringify(operations, null, 2)
 }
 
-function parsePatchOperations(raw: string): TemplatePatchOperation[] {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    throw new Error('补丁操作必须是合法 JSON。')
+function createPatchOperationRow(op: PatchOperationKind = 'list_append'): LowCodePatchOperationRow {
+  const row: LowCodePatchOperationRow = {
+    id: nextPatchOperationId.value++,
+    op,
+    path: '',
+    valueEditor: defaultValueNodeForOperation(op),
+    indexText: '',
+    useOldValue: false,
+    oldValueEditor: createStructuredValueNode(valueFactory),
+  }
+  applyPatchOperationDefaults(row, op)
+  return row
+}
+
+function applyPatchOperationDefaults(row: LowCodePatchOperationRow, nextOp: PatchOperationKind): void {
+  row.op = nextOp
+
+  if (nextOp === 'merge' && row.valueEditor.kind !== 'object') {
+    setStructuredValueKind(row.valueEditor, valueFactory, 'object')
   }
 
-  if (!Array.isArray(parsed)) {
-    throw new Error('补丁操作必须是 JSON 数组。')
+  if (!requiresIndex(nextOp)) {
+    row.indexText = ''
+  } else if (!row.indexText.trim()) {
+    row.indexText = '0'
   }
 
-  return parsed as TemplatePatchOperation[]
+  if (nextOp !== 'list_replace') {
+    row.useOldValue = false
+    row.oldValueEditor = createStructuredValueNode(valueFactory)
+  }
 }
 
 function resetTemplateForm(): void {
@@ -267,11 +373,77 @@ async function saveTemplate(): Promise<void> {
   }
 }
 
+function buildPatchOperationsFromForm(): TemplatePatchOperation[] {
+  if (patchForm.operations.length === 0) {
+    throw new Error('至少需要一个补丁操作。')
+  }
+
+  return patchForm.operations.map((row, index) => {
+    const rowNumber = index + 1
+    const path = row.path.trim()
+    if (!path) {
+      throw new Error(`第 ${rowNumber} 条操作缺少 path。`)
+    }
+
+    const operation: TemplatePatchOperation = {
+      op: row.op,
+      path,
+    }
+
+    if (requiresValue(row.op)) {
+      operation.value = structuredValueNodeToUnknown(row.valueEditor, `第 ${rowNumber} 条操作的 value`)
+    }
+
+    if (requiresIndex(row.op)) {
+      const indexText = row.indexText.trim()
+      if (!indexText) {
+        throw new Error(`第 ${rowNumber} 条操作缺少 index。`)
+      }
+      if (!/^\d+$/.test(indexText)) {
+        throw new Error(`第 ${rowNumber} 条操作的 index 必须是非负整数。`)
+      }
+      operation.index = Number(indexText)
+    }
+
+    if (row.op === 'list_replace' && row.useOldValue) {
+      operation.old_value = structuredValueNodeToUnknown(row.oldValueEditor, `第 ${rowNumber} 条操作的 old_value`)
+    }
+
+    return operation
+  })
+}
+
 function resetPatchForm(): void {
   patchEditingId.value = null
   patchForm.name = ''
   patchForm.description = ''
-  patchForm.operationsText = DEFAULT_PATCH_OPERATIONS
+  patchForm.operations = [createPatchOperationRow()]
+}
+
+function addPatchOperation(op: PatchOperationKind = 'list_append'): void {
+  patchForm.operations.push(createPatchOperationRow(op))
+}
+
+function removePatchOperation(index: number): void {
+  if (patchForm.operations.length === 1) {
+    patchForm.operations[0] = createPatchOperationRow(patchForm.operations[0].op)
+    return
+  }
+  patchForm.operations.splice(index, 1)
+}
+
+function movePatchOperation(index: number, direction: -1 | 1): void {
+  const targetIndex = index + direction
+  if (targetIndex < 0 || targetIndex >= patchForm.operations.length) {
+    return
+  }
+
+  const [row] = patchForm.operations.splice(index, 1)
+  patchForm.operations.splice(targetIndex, 0, row)
+}
+
+function updatePatchOperationKind(row: LowCodePatchOperationRow, op: PatchOperationKind): void {
+  applyPatchOperationDefaults(row, op)
 }
 
 function openCreatePatchDialog(): void {
@@ -284,15 +456,23 @@ function openEditPatchDialog(patch: TemplatePatchRecord): void {
   selectedPatchId.value = patch.id
   patchForm.name = patch.name
   patchForm.description = patch.description ?? ''
-  patchForm.operationsText = formatOperations(patch.operations)
+  patchForm.operations = patch.operations.map((operation) => patchRowFromOperation(operation))
   patchDialog.value = true
 }
 
 async function savePatch(): Promise<void> {
+  let operations: TemplatePatchOperation[]
+  try {
+    operations = buildPatchOperationsFromForm()
+  } catch (caught) {
+    store.showError(caught instanceof Error ? caught.message : '补丁配置无效。')
+    return
+  }
+
   const payload: TemplatePatchPayload = {
     name: patchForm.name.trim(),
     description: patchForm.description.trim() || null,
-    operations: parsePatchOperations(patchForm.operationsText),
+    operations,
   }
 
   const succeeded = patchEditingId.value === null
@@ -491,7 +671,7 @@ async function previewCompositeDraft(): Promise<void> {
               预览补丁效果
             </v-btn>
             <v-sheet class="preview-panel" color="surface-variant" rounded="xl">
-              <pre>{{ selectedPatch ? formatOperations(selectedPatch.operations) : '从左侧选择模板补丁查看操作 JSON。' }}</pre>
+              <pre>{{ selectedPatch ? formatOperations(selectedPatch.operations) : '从左侧选择模板补丁查看生成后的 JSON。' }}</pre>
             </v-sheet>
           </v-card-text>
         </v-card>
@@ -605,11 +785,11 @@ async function previewCompositeDraft(): Promise<void> {
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="patchDialog">
+  <v-dialog v-model="patchDialog" max-width="1200">
     <v-card>
       <v-card-item>
         <v-card-title>{{ patchDialogTitle }}</v-card-title>
-        <v-card-subtitle>补丁操作使用 JSON 数组表示，内容会按顺序逐条执行。</v-card-subtitle>
+        <v-card-subtitle>对象和数组现在也可以通过结构化表单编辑，不再需要手写 JSON。</v-card-subtitle>
       </v-card-item>
 
       <v-card-text>
@@ -621,7 +801,116 @@ async function previewCompositeDraft(): Promise<void> {
             <v-text-field v-model="patchForm.description" label="描述" maxlength="255" />
           </v-col>
           <v-col cols="12">
-            <v-textarea v-model="patchForm.operationsText" label="操作 JSON" rows="16" auto-grow />
+            <div class="d-flex flex-column flex-sm-row ga-3 align-sm-center justify-space-between mb-3">
+              <div>
+                <div class="text-subtitle-1 font-weight-medium">补丁操作序列</div>
+                <div class="text-body-2 text-medium-emphasis">每条操作按显示顺序执行，顺序变化会影响最终结果。</div>
+              </div>
+              <v-btn color="primary" prepend-icon="mdi-plus" variant="tonal" @click="addPatchOperation()">添加操作</v-btn>
+            </div>
+
+            <v-alert v-if="patchValidationMessage" type="warning" variant="tonal" class="mb-4">
+              {{ patchValidationMessage }}
+            </v-alert>
+
+            <div class="d-flex flex-column ga-4">
+              <v-card
+                v-for="(operation, index) in patchForm.operations"
+                :key="operation.id"
+                border="sm"
+                rounded="xl"
+                variant="outlined"
+              >
+                <v-card-item>
+                  <div class="d-flex flex-column flex-md-row ga-3 justify-space-between">
+                    <div>
+                      <v-card-title class="px-0">第 {{ index + 1 }} 步</v-card-title>
+                      <v-card-subtitle class="px-0">{{ operationDescription(operation.op) }}</v-card-subtitle>
+                    </div>
+                    <div class="d-flex ga-2 align-start">
+                      <v-btn icon="mdi-arrow-up" size="small" variant="text" :disabled="index === 0" @click="movePatchOperation(index, -1)" />
+                      <v-btn
+                        icon="mdi-arrow-down"
+                        size="small"
+                        variant="text"
+                        :disabled="index === patchForm.operations.length - 1"
+                        @click="movePatchOperation(index, 1)"
+                      />
+                      <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="removePatchOperation(index)" />
+                    </div>
+                  </div>
+                </v-card-item>
+
+                <v-card-text>
+                  <v-row>
+                    <v-col cols="12" md="4">
+                      <v-select
+                        :model-value="operation.op"
+                        :items="PATCH_OPERATION_OPTIONS"
+                        item-title="title"
+                        item-value="value"
+                        label="操作类型"
+                        @update:model-value="updatePatchOperationKind(operation, $event)"
+                      />
+                    </v-col>
+                    <v-col cols="12" md="8">
+                      <v-text-field
+                        v-model="operation.path"
+                        label="路径"
+                        placeholder="proxy-groups.0.proxies"
+                        hint="使用点号路径；数组下标写数字。"
+                        persistent-hint
+                      />
+                    </v-col>
+
+                    <v-col v-if="requiresIndex(operation.op)" cols="12" md="4">
+                      <v-text-field
+                        v-model="operation.indexText"
+                        label="索引"
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                      />
+                    </v-col>
+
+                    <v-col v-if="requiresValue(operation.op)" cols="12" :md="requiresIndex(operation.op) ? 8 : 12">
+                      <StructuredValueEditor
+                        :node="operation.valueEditor"
+                        :factory="valueFactory"
+                        label="value"
+                        :allow-null="operation.op !== 'merge'"
+                      />
+                    </v-col>
+
+                    <v-col v-if="operation.op === 'list_replace'" cols="12">
+                      <v-switch v-model="operation.useOldValue" label="启用 old_value 校验" hide-details />
+                    </v-col>
+
+                    <v-col v-if="operation.op === 'list_replace' && operation.useOldValue" cols="12">
+                      <StructuredValueEditor
+                        :node="operation.oldValueEditor"
+                        :factory="valueFactory"
+                        label="old_value"
+                      />
+                    </v-col>
+                  </v-row>
+                </v-card-text>
+              </v-card>
+            </div>
+          </v-col>
+
+          <v-col cols="12">
+            <v-card border="sm" rounded="xl" variant="tonal">
+              <v-card-item>
+                <v-card-title class="px-0">生成后的 JSON</v-card-title>
+                <v-card-subtitle class="px-0">结构化表单最终会转换成下面这份补丁 JSON。</v-card-subtitle>
+              </v-card-item>
+              <v-card-text>
+                <v-sheet class="preview-panel" color="surface" rounded="xl">
+                  <pre>{{ generatedPatchJson }}</pre>
+                </v-sheet>
+              </v-card-text>
+            </v-card>
           </v-col>
         </v-row>
       </v-card-text>
