@@ -145,12 +145,12 @@ class PatchEngine:
         *,
         operation_index: int,
     ) -> None:
-        value = self._require_value(operation, operation_index=operation_index)
-        try:
-            target.remove(value)
-        except ValueError as exc:
-            msg = f'operation {operation_index} value not present at path {path!r}'
-            raise PatchValidationError(msg) from exc
+        index = self._require_list_index(operation.get('index'), target, operation_index=operation_index, allow_end=False)
+        old_value = operation.get('old_value', _MISSING_VALUE)
+        if old_value is not _MISSING_VALUE and target[index] != old_value:
+            msg = f'operation {operation_index} old_value mismatch at path {path!r}'
+            raise PatchValidationError(msg)
+        del target[index]
 
     def _replace_list_item(
         self,

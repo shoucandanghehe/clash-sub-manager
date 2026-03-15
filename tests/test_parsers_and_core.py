@@ -337,3 +337,31 @@ def test_template_composer_refreshes_composite_cache() -> None:
 
     assert rendered == {'proxies': [{'name': 'Node-A'}]}
     assert yaml.safe_load(composite.cached_content) == rendered
+
+
+def test_patch_engine_list_remove_uses_index_and_optional_old_value() -> None:
+    engine = PatchEngine()
+    template = {'proxy-groups': [{'name': 'Auto', 'proxies': ['DIRECT', 'Node-A', 'Node-B']}]}
+
+    rendered = engine.apply(
+        template,
+        [
+            {'op': 'list_remove', 'path': 'proxy-groups.0.proxies', 'index': 1, 'old_value': 'Node-A'},
+        ],
+    )
+
+    assert rendered['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-B']
+    assert template['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-A', 'Node-B']
+
+
+def test_patch_engine_list_remove_rejects_old_value_mismatch() -> None:
+    engine = PatchEngine()
+    template = {'proxy-groups': [{'name': 'Auto', 'proxies': ['DIRECT', 'Node-A']}]}
+
+    with pytest.raises(PatchValidationError, match='old_value mismatch'):
+        engine.apply(
+            template,
+            [
+                {'op': 'list_remove', 'path': 'proxy-groups.0.proxies', 'index': 1, 'old_value': 'Wrong-Node'},
+            ],
+        )

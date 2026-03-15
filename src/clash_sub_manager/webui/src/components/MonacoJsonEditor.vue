@@ -5,6 +5,8 @@ import * as monaco from 'monaco-editor'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 
+import type { TemplatePathEntry } from '../utils/templatePath'
+
 const PATCH_OPERATIONS_SCHEMA_URI = 'inmemory://schema/patch-operations.json'
 const MODEL_URI = monaco.Uri.parse('inmemory://model/patch-operations.json')
 const PATCH_OPERATION_NAMES = ['set', 'delete', 'merge', 'list_append', 'list_insert', 'list_remove', 'list_replace'] as const
@@ -14,7 +16,7 @@ const OPERATION_FIELD_MAP: Record<(typeof PATCH_OPERATION_NAMES)[number], string
   merge: ['op', 'path', 'value'],
   list_append: ['op', 'path', 'value'],
   list_insert: ['op', 'path', 'index', 'value'],
-  list_remove: ['op', 'path', 'value'],
+  list_remove: ['op', 'path', 'index', 'old_value'],
   list_replace: ['op', 'path', 'index', 'old_value', 'value'],
 }
 const DEFAULT_FIELDS = ['op', 'path', 'value', 'index', 'old_value']
@@ -24,10 +26,12 @@ const props = withDefaults(
     modelValue: string
     height?: string
     pathSuggestions?: string[]
+    pathEntries?: TemplatePathEntry[]
   }>(),
   {
     height: '28rem',
     pathSuggestions: () => [],
+    pathEntries: () => [],
   },
 )
 
@@ -103,15 +107,21 @@ function setupJsonDiagnostics(): void {
                 },
               },
               {
-                if: { properties: { op: { enum: ['set', 'merge', 'list_append', 'list_remove'] } } },
+                if: { properties: { op: { enum: ['set', 'merge', 'list_append'] } } },
                 then: {
                   required: ['value'],
                 },
               },
               {
+                if: { properties: { op: { enum: ['list_insert', 'list_remove', 'list_replace'] } } },
+                then: {
+                  required: ['index'],
+                },
+              },
+              {
                 if: { properties: { op: { enum: ['list_insert', 'list_replace'] } } },
                 then: {
-                  required: ['value', 'index'],
+                  required: ['value'],
                 },
               },
             ],
@@ -137,6 +147,7 @@ function setupPatchJsonCompletions(): void {
       const suggestions = [
         ...createOperationValueSuggestions(currentModel, position),
         ...createPathValueSuggestions(currentModel, position),
+        ...createValueSuggestions(currentModel, position),
         ...createFieldNameSuggestions(currentModel, position),
         ...createOperationSnippetSuggestions(currentModel, position),
       ]
@@ -181,6 +192,48 @@ function createPathValueSuggestions(
     detail: '目标模板路径',
     documentation: '来自当前路径校验目标模板的可用路径。',
   }))
+}
+
+function createValueSuggestions(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+): monaco.languages.CompletionItem[] {
+  const propertyName = currentValueProperty(currentModel, position)
+  if (propertyName !== 'value' && propertyName !== 'old_value') {
+    return []
+  }
+
+  const currentPath = guessCurrentPath(currentModel, position)
+  if (!currentPath) {
+    return []
+  }
+
+  const entry = props.pathEntries.find((candidate) => candidate.path === currentPath)
+  if (!entry) {
+    return []
+  }
+
+  const range = replacementRange(currentModel, position)
+  return [
+    {
+      label: propertyName === 'old_value' ? '使用当前旧值' : '使用当前模板值',
+      kind: monaco.languages.CompletionItemKind.Value,
+      insertText: JSON.stringify(entry.value, null, 2),
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      range,
+      detail: `${entry.path} 当前值`,
+      documentation: entry.valuePreview,
+    },
+    {
+      label: entry.kind === 'object' ? '对象模板' : entry.kind === 'array' ? '数组模板' : '标量值模板',
+      kind: monaco.languages.CompletionItemKind.Snippet,
+      insertText: JSON.stringify(entry.value, null, 2),
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      range,
+      detail: '来自目标模板当前位置',
+      documentation: entry.valuePreview,
+    },
+  ]
 }
 
 function createFieldNameSuggestions(
@@ -261,7 +314,8 @@ function createOperationSnippetSuggestions(
       `${indent}{`,
       `${indent}  "op": "list_remove",`,
       `${indent}  "path": "$1",`,
-      `${indent}  "value": $2`,
+      `${indent}  "index": $2,`,
+      `${indent}  "old_value": $3`,
       `${indent}}$0`,
     ]),
     createSnippetSuggestion('list_replace 操作', 'list_replace', baseRange, [
@@ -302,6 +356,20 @@ function isInsidePropertyString(
   return new RegExp(`"${propertyName}"\\s*:\\s*"[^"]*$`).test(linePrefix)
 }
 
+function currentValueProperty(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+): 'value' | 'old_value' | null {
+  const linePrefix = currentModel.getLineContent(position.lineNumber).slice(0, position.column - 1)
+  if (/"value"\s*:\s*[^\n]*$/.test(linePrefix)) {
+    return 'value'
+  }
+  if (/"old_value"\s*:\s*[^\n]*$/.test(linePrefix)) {
+    return 'old_value'
+  }
+  return null
+}
+
 function stringValueRange(currentModel: monaco.editor.ITextModel, position: monaco.Position): monaco.Range {
   const range = currentModel.getWordUntilPosition(position)
   return new monaco.Range(
@@ -310,6 +378,11 @@ function stringValueRange(currentModel: monaco.editor.ITextModel, position: mona
     position.lineNumber,
     range.endColumn,
   )
+}
+
+function replacementRange(currentModel: monaco.editor.ITextModel, position: monaco.Position): monaco.Range {
+  const lineContent = currentModel.getLineContent(position.lineNumber)
+  return new monaco.Range(position.lineNumber, 1, position.lineNumber, lineContent.length + 1)
 }
 
 function shouldOfferFieldSuggestions(currentModel: monaco.editor.ITextModel, position: monaco.Position): boolean {
@@ -349,6 +422,17 @@ function guessCurrentOperation(
   return PATCH_OPERATION_NAMES.find((name) => name === last) ?? null
 }
 
+function guessCurrentPath(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+): string | null {
+  const fullText = currentModel.getValueInRange(
+    new monaco.Range(1, 1, position.lineNumber, currentModel.getLineMaxColumn(position.lineNumber)),
+  )
+  const matches = [...fullText.matchAll(/"path"\s*:\s*"([^"]+)"/g)]
+  return matches.at(-1)?.[1] ?? null
+}
+
 function describeOperation(name: (typeof PATCH_OPERATION_NAMES)[number]): string {
   switch (name) {
     case 'set':
@@ -362,7 +446,7 @@ function describeOperation(name: (typeof PATCH_OPERATION_NAMES)[number]): string
     case 'list_insert':
       return '向列表指定索引插入元素。'
     case 'list_remove':
-      return '从列表中删除匹配元素。'
+      return '按索引从列表中删除元素，并可用 old_value 做校验。'
     case 'list_replace':
       return '替换列表指定索引处的元素。'
   }

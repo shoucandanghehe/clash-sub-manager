@@ -321,3 +321,57 @@ def test_template_patch_and_composite_template_endpoints(client: TestClient) -> 
 
     delete_template = client.delete(f'/templates/{template_id}')
     assert delete_template.status_code == 204
+
+
+def test_template_patch_list_remove_requires_index_and_supports_old_value(client: TestClient) -> None:
+    template_response = client.post(
+        '/templates',
+        json={
+            'name': 'remove-template',
+            'content': (
+                'proxy-groups:\n'
+                '  - name: Auto\n'
+                '    proxies:\n'
+                '      - DIRECT\n'
+                '      - Node-A\n'
+                '      - Node-B\n'
+            ),
+        },
+    )
+    assert template_response.status_code == 201
+    template_id = template_response.json()['id']
+
+    invalid_patch_response = client.post(
+        '/template-patches',
+        json={
+            'name': 'invalid-remove',
+            'operations': [
+                {'op': 'list_remove', 'path': 'proxy-groups.0.proxies', 'value': 'Node-A'},
+            ],
+        },
+    )
+    assert invalid_patch_response.status_code == 422
+
+    remove_patch_response = client.post(
+        '/template-patches',
+        json={
+            'name': 'remove-node',
+            'operations': [
+                {
+                    'op': 'list_remove',
+                    'path': 'proxy-groups.0.proxies',
+                    'index': 1,
+                    'old_value': 'Node-A',
+                }
+            ],
+        },
+    )
+    assert remove_patch_response.status_code == 201
+    remove_patch_id = remove_patch_response.json()['id']
+
+    patch_preview = client.post(
+        f'/template-patches/{remove_patch_id}/preview',
+        json={'base_template_id': template_id},
+    )
+    assert patch_preview.status_code == 200
+    assert patch_preview.json()['content']['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-B']

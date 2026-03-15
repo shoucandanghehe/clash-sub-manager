@@ -38,8 +38,9 @@ class PatchOperation(BaseModel):
 
     @model_validator(mode='after')
     def validate_fields(self) -> PatchOperation:
-        requires_value = {'list_append', 'list_insert', 'list_remove', 'list_replace', 'merge', 'set'}
-        requires_index = {'list_insert', 'list_replace'}
+        requires_value = {'list_append', 'list_insert', 'list_replace', 'merge', 'set'}
+        requires_index = {'list_insert', 'list_remove', 'list_replace'}
+        supports_old_value = {'list_remove', 'list_replace'}
 
         if self.op in requires_value and 'value' not in self.model_fields_set:
             msg = f'value is required for {self.op}'
@@ -53,8 +54,8 @@ class PatchOperation(BaseModel):
         if self.op not in requires_index and self.index is not None:
             msg = f'index is not supported for {self.op}'
             raise ValueError(msg)
-        if self.op != 'list_replace' and 'old_value' in self.model_fields_set:
-            msg = 'old_value is only supported for list_replace'
+        if self.op not in supports_old_value and 'old_value' in self.model_fields_set:
+            msg = 'old_value is only supported for list_remove and list_replace'
             raise ValueError(msg)
         return self
 

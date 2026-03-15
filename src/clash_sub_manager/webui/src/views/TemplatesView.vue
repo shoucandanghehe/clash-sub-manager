@@ -79,7 +79,7 @@ const PATCH_OPERATION_OPTIONS: PatchOperationOption[] = [
   { value: 'merge', title: 'merge', description: '向对象做深度合并' },
   { value: 'list_append', title: 'list_append', description: '向列表末尾追加元素' },
   { value: 'list_insert', title: 'list_insert', description: '向列表指定位置插入元素' },
-  { value: 'list_remove', title: 'list_remove', description: '从列表移除匹配元素' },
+  { value: 'list_remove', title: 'list_remove', description: '按索引从列表移除元素' },
   { value: 'list_replace', title: 'list_replace', description: '替换列表指定下标元素' },
 ]
 
@@ -88,10 +88,9 @@ const VALUE_REQUIRED_OPERATIONS = new Set<PatchOperationKind>([
   'merge',
   'list_append',
   'list_insert',
-  'list_remove',
   'list_replace',
 ])
-const INDEX_REQUIRED_OPERATIONS = new Set<PatchOperationKind>(['list_insert', 'list_replace'])
+const INDEX_REQUIRED_OPERATIONS = new Set<PatchOperationKind>(['list_insert', 'list_remove', 'list_replace'])
 
 const store = useManagerStore()
 const {
@@ -689,7 +688,7 @@ function applyPatchOperationDefaults(row: LowCodePatchOperationRow, nextOp: Patc
     row.indexText = '0'
   }
 
-  if (nextOp !== 'list_replace') {
+  if (nextOp !== 'list_remove' && nextOp !== 'list_replace') {
     row.useOldValue = false
     row.oldValueEditor = createStructuredValueNode(valueFactory)
   }
@@ -761,7 +760,7 @@ function buildPatchOperationsFromForm(): TemplatePatchOperation[] {
       operation.index = Number(indexText)
     }
 
-    if (row.op === 'list_replace' && row.useOldValue) {
+    if ((row.op === 'list_remove' || row.op === 'list_replace') && row.useOldValue) {
       operation.old_value = structuredValueNodeToUnknown(row.oldValueEditor, `第 ${rowNumber} 条操作的 old_value`)
     }
 
@@ -1369,11 +1368,11 @@ async function previewCompositeDraft(): Promise<void> {
                           />
                         </v-col>
 
-                        <v-col v-if="operation.op === 'list_replace'" cols="12">
+                        <v-col v-if="operation.op === 'list_remove' || operation.op === 'list_replace'" cols="12">
                           <v-switch v-model="operation.useOldValue" label="启用 old_value 校验" hide-details />
                         </v-col>
 
-                        <v-col v-if="operation.op === 'list_replace' && operation.useOldValue" cols="12">
+                        <v-col v-if="(operation.op === 'list_remove' || operation.op === 'list_replace') && operation.useOldValue" cols="12">
                           <StructuredValueEditor
                             :node="operation.oldValueEditor"
                             :factory="valueFactory"
