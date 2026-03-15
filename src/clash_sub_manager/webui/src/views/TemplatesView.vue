@@ -11,6 +11,7 @@ import type {
   TemplatePayload,
   TemplateRecord,
 } from '../api'
+import MonacoJsonEditor from '../components/MonacoJsonEditor.vue'
 import SegmentedPicker from '../components/SegmentedPicker.vue'
 import StructuredValueEditor from '../components/StructuredValueEditor.vue'
 import TemplatePathTree from '../components/TemplatePathTree.vue'
@@ -1343,17 +1344,15 @@ async function previewCompositeDraft(): Promise<void> {
               <v-window-item value="json">
                 <div class="d-flex flex-column ga-4">
                   <div class="text-body-2 text-medium-emphasis">
-                    原生 JSON 编辑与低代码编辑双向同步。这里填写合法的操作数组后，低代码节点会自动刷新。
+                    原生 JSON 编辑与低代码编辑支持延迟同步：仅在切换标签页、保存、打开或重置时互相同步，避免输入过程被覆盖。
                   </div>
                   <v-alert v-if="patchJsonError" type="warning" variant="tonal">
                     {{ patchJsonError }}
                   </v-alert>
-                  <v-textarea
+                  <MonacoJsonEditor
                     :model-value="patchJsonText"
-                    label="补丁操作 JSON 数组"
-                    rows="20"
-                    auto-grow
-                    @update:model-value="handlePatchJsonInput(String($event ?? ''))"
+                    height="32rem"
+                    @update:model-value="handlePatchJsonInput"
                   />
                 </div>
               </v-window-item>
