@@ -11,7 +11,9 @@ import type {
   TemplatePayload,
   TemplateRecord,
 } from '../api'
+import SegmentedPicker from '../components/SegmentedPicker.vue'
 import StructuredValueEditor from '../components/StructuredValueEditor.vue'
+import TemplatePathTree from '../components/TemplatePathTree.vue'
 import {
   createStructuredValueNode,
   setStructuredValueKind,
@@ -21,6 +23,15 @@ import {
   type StructuredValueNode,
 } from '../components/structuredValue'
 import { useManagerStore } from '../stores/manager'
+import {
+  buildTemplatePathContext,
+  buildTemplatePathTree,
+  filterTemplatePathTree,
+  parseTemplateDocument,
+  resolveTemplatePath,
+  type TemplatePathContext,
+  type TemplatePathResolution,
+} from '../utils/templatePath'
 
 type TemplateTab = 'templates' | 'patches' | 'composites'
 type PatchOperationKind = TemplatePatchOperation['op']
@@ -112,6 +123,12 @@ const patchDialog = ref(false)
 const patchEditingId = ref<number | null>(null)
 const selectedPatchId = ref<number | null>(null)
 const patchPreviewTemplateId = ref<number | null>(null)
+const patchAuthoringTemplateId = ref<number | null>(null)
+const activePatchOperationId = ref<number | null>(null)
+const pathPickerDialog = ref(false)
+const pathPickerSearch = ref('')
+const collapsedTreePaths = ref<string[]>([])
+const expandedContextOperationIds = ref<number[]>([])
 const patchForm = reactive<TemplatePatchForm>({
   name: '',
   description: '',
@@ -205,12 +222,95 @@ const selectedComposite = computed(() => {
   return compositeTemplates.value.find((composite) => composite.id === selectedCompositeId.value) ?? null
 })
 
+const patchAuthoringTemplate = computed(() => {
+  return templates.value.find((template) => template.id === patchAuthoringTemplateId.value) ?? null
+})
+
+const patchAuthoringDocument = computed(() => {
+  if (!patchAuthoringTemplate.value) {
+    return null
+  }
+
+  try {
+    return parseTemplateDocument(patchAuthoringTemplate.value.content)
+  } catch (caught) {
+    return caught instanceof Error ? caught.message : '模板解析失败。'
+  }
+})
+
+const patchPathPreviews = computed<Record<number, TemplatePathResolution>>(() => {
+  const documentOrError = patchAuthoringDocument.value
+  if (!documentOrError) {
+    return Object.fromEntries(
+      patchForm.operations.map((operation) => [
+        operation.id,
+        {
+          ok: false,
+          message: '请选择一个目标模板以校验路径。',
+        },
+      ]),
+    )
+  }
+
+  if (typeof documentOrError === 'string') {
+    return Object.fromEntries(
+      patchForm.operations.map((operation) => [
+        operation.id,
+        {
+          ok: false,
+          message: documentOrError,
+        },
+      ]),
+    )
+  }
+
+  return Object.fromEntries(
+    patchForm.operations.map((operation) => [operation.id, resolveTemplatePath(documentOrError, operation.path)]),
+  )
+})
+
+const patchPathContexts = computed<Record<number, TemplatePathContext>>(() => {
+  const template = patchAuthoringTemplate.value
+  if (!template) {
+    return Object.fromEntries(
+      patchForm.operations.map((operation) => [operation.id, { matchedLineNumber: null, lines: [] }]),
+    )
+  }
+
+  return Object.fromEntries(
+    patchForm.operations.map((operation) => [
+      operation.id,
+      buildTemplatePathContext(
+        template.content,
+        operation.path,
+        patchPathPreviews.value[operation.id]?.matchedValue,
+      ),
+    ]),
+  )
+})
+
+const patchTreeNodes = computed(() => {
+  const documentOrError = patchAuthoringDocument.value
+  if (!documentOrError || typeof documentOrError === 'string') {
+    return []
+  }
+  return buildTemplatePathTree(documentOrError)
+})
+
+const filteredPatchTreeNodes = computed(() => {
+  return filterTemplatePathTree(patchTreeNodes.value, pathPickerSearch.value)
+})
+
+const activePatchOperation = computed(() => {
+  return patchForm.operations.find((operation) => operation.id === activePatchOperationId.value) ?? null
+})
 watch(
   templates,
   (items) => {
     if (items.length === 0) {
       selectedTemplateId.value = null
       patchPreviewTemplateId.value = null
+      patchAuthoringTemplateId.value = null
       if (!compositeDialog.value) {
         compositeForm.baseTemplateId = null
       }
@@ -224,6 +324,11 @@ watch(
     if (!items.some((template) => template.id === patchPreviewTemplateId.value)) {
       patchPreviewTemplateId.value = items.find((template) => template.is_default)?.id ?? items[0].id
     }
+
+    if (!items.some((template) => template.id === patchAuthoringTemplateId.value)) {
+      patchAuthoringTemplateId.value = items.find((template) => template.is_default)?.id ?? items[0].id
+    }
+
 
     if (
       compositeForm.baseTemplateId !== null &&
@@ -270,6 +375,23 @@ watch(
   { immediate: true },
 )
 
+function collectExpandableTreePaths(nodes: Array<{ path: string; children: Array<{ path: string; children: unknown[] }> }>): string[] {
+  const paths: string[] = []
+
+  function visit(entries: Array<{ path: string; children: Array<{ path: string; children: unknown[] }> }>): void {
+    for (const entry of entries) {
+      if (entry.children.length > 0) {
+        paths.push(entry.path)
+        visit(entry.children as Array<{ path: string; children: Array<{ path: string; children: unknown[] }> }>)
+      }
+    }
+  }
+
+  visit(nodes)
+  return paths
+}
+
+
 function requiresValue(op: PatchOperationKind): boolean {
   return VALUE_REQUIRED_OPERATIONS.has(op)
 }
@@ -300,6 +422,97 @@ function patchRowFromOperation(operation: TemplatePatchOperation): LowCodePatchO
 
 function formatOperations(operations: TemplatePatchOperation[]): string {
   return JSON.stringify(operations, null, 2)
+}
+
+function pathPreviewFor(operationId: number): TemplatePathResolution {
+  return patchPathPreviews.value[operationId] ?? {
+    ok: false,
+    message: '路径预览不可用。',
+  }
+}
+
+function pathContextFor(operationId: number): TemplatePathContext {
+  return patchPathContexts.value[operationId] ?? {
+    matchedLineNumber: null,
+    matchedBlockStartLineNumber: null,
+    matchedBlockEndLineNumber: null,
+    isCollectionMatch: false,
+    lines: [],
+  }
+}
+
+function isContextExpanded(operationId: number): boolean {
+  return expandedContextOperationIds.value.includes(operationId)
+}
+
+function expandContext(operationId: number): void {
+  if (!expandedContextOperationIds.value.includes(operationId)) {
+    expandedContextOperationIds.value = [...expandedContextOperationIds.value, operationId]
+  }
+}
+
+function collapseContext(operationId: number): void {
+  expandedContextOperationIds.value = expandedContextOperationIds.value.filter((id) => id !== operationId)
+}
+
+function visibleContextLines(operationId: number): TemplatePathContext['lines'] {
+  const context = pathContextFor(operationId)
+  if (!context.isCollectionMatch || !context.matchedBlockStartLineNumber || !context.matchedBlockEndLineNumber) {
+    return context.lines
+  }
+
+  const matchedLines = context.matchedBlockEndLineNumber - context.matchedBlockStartLineNumber + 1
+  if (matchedLines <= 8 || isContextExpanded(operationId)) {
+    return context.lines
+  }
+
+  const headCutoff = context.matchedBlockStartLineNumber + 2
+  const tailStart = context.matchedBlockEndLineNumber - 2
+
+  return context.lines.filter((line) => line.lineNumber <= headCutoff || line.lineNumber >= tailStart)
+}
+
+function hiddenContextLineCount(operationId: number): number {
+  const context = pathContextFor(operationId)
+  if (!context.isCollectionMatch || !context.matchedBlockStartLineNumber || !context.matchedBlockEndLineNumber) {
+    return 0
+  }
+
+  const matchedLines = context.matchedBlockEndLineNumber - context.matchedBlockStartLineNumber + 1
+  if (matchedLines <= 8) {
+    return 0
+  }
+  return matchedLines - 6
+}
+
+function foldedTailStartLine(operationId: number): number | null {
+  const context = pathContextFor(operationId)
+  if (!context.isCollectionMatch || !context.matchedBlockEndLineNumber) {
+    return null
+  }
+  if (hiddenContextLineCount(operationId) === 0) {
+    return null
+  }
+  return context.matchedBlockEndLineNumber - 2
+}
+
+function shouldShowContextFoldBefore(operationId: number, lineNumber: number): boolean {
+  const tailStart = foldedTailStartLine(operationId)
+  if (tailStart === null || isContextExpanded(operationId)) {
+    return false
+  }
+  return lineNumber === tailStart
+}
+
+function shouldShowContextCollapseAfter(operationId: number, lineNumber: number): boolean {
+  const context = pathContextFor(operationId)
+  if (!context.isCollectionMatch || !context.matchedBlockEndLineNumber) {
+    return false
+  }
+  if (!isContextExpanded(operationId) || hiddenContextLineCount(operationId) === 0) {
+    return false
+  }
+  return lineNumber === context.matchedBlockEndLineNumber
 }
 
 function createPatchOperationRow(op: PatchOperationKind = 'list_append'): LowCodePatchOperationRow {
@@ -418,18 +631,27 @@ function resetPatchForm(): void {
   patchForm.name = ''
   patchForm.description = ''
   patchForm.operations = [createPatchOperationRow()]
+  activePatchOperationId.value = patchForm.operations[0]?.id ?? null
+  patchAuthoringTemplateId.value = templates.value.find((template) => template.is_default)?.id ?? templates.value[0]?.id ?? null
 }
 
 function addPatchOperation(op: PatchOperationKind = 'list_append'): void {
-  patchForm.operations.push(createPatchOperationRow(op))
+  const operation = createPatchOperationRow(op)
+  patchForm.operations.push(operation)
+  activePatchOperationId.value = operation.id
 }
 
 function removePatchOperation(index: number): void {
+  const removedId = patchForm.operations[index]?.id ?? null
   if (patchForm.operations.length === 1) {
     patchForm.operations[0] = createPatchOperationRow(patchForm.operations[0].op)
+    activePatchOperationId.value = patchForm.operations[0]?.id ?? null
     return
   }
   patchForm.operations.splice(index, 1)
+  if (removedId !== null && activePatchOperationId.value === removedId) {
+    activePatchOperationId.value = patchForm.operations[index]?.id ?? patchForm.operations[index - 1]?.id ?? null
+  }
 }
 
 function movePatchOperation(index: number, direction: -1 | 1): void {
@@ -457,8 +679,46 @@ function openEditPatchDialog(patch: TemplatePatchRecord): void {
   patchForm.name = patch.name
   patchForm.description = patch.description ?? ''
   patchForm.operations = patch.operations.map((operation) => patchRowFromOperation(operation))
+  activePatchOperationId.value = patchForm.operations[0]?.id ?? null
+  patchAuthoringTemplateId.value = templates.value.find((template) => template.is_default)?.id ?? templates.value[0]?.id ?? null
   patchDialog.value = true
 }
+
+function setActivePatchOperation(operationId: number): void {
+  activePatchOperationId.value = operationId
+}
+
+function applyTreePathToActiveOperation(path: string): void {
+  if (!activePatchOperation.value) {
+    store.showError('请先选择一个补丁操作，再从树中填充路径。')
+    return
+  }
+  activePatchOperation.value.path = path
+  pathPickerDialog.value = false
+}
+
+function toggleCollapsedTreePath(path: string): void {
+  const next = new Set(collapsedTreePaths.value)
+  if (next.has(path)) {
+    next.delete(path)
+  } else {
+    next.add(path)
+  }
+  collapsedTreePaths.value = [...next]
+}
+
+function openPathPicker(operationId: number): void {
+  setActivePatchOperation(operationId)
+  pathPickerSearch.value = ''
+  collapsedTreePaths.value = collectExpandableTreePaths(patchTreeNodes.value)
+  pathPickerDialog.value = true
+}
+
+function closePathPicker(): void {
+  pathPickerDialog.value = false
+  pathPickerSearch.value = ''
+}
+
 
 async function savePatch(): Promise<void> {
   let operations: TemplatePatchOperation[]
@@ -789,16 +1049,28 @@ async function previewCompositeDraft(): Promise<void> {
     <v-card>
       <v-card-item>
         <v-card-title>{{ patchDialogTitle }}</v-card-title>
-        <v-card-subtitle>对象和数组现在也可以通过结构化表单编辑，不再需要手写 JSON。</v-card-subtitle>
+        <v-card-subtitle>选择目标模板后，输入路径会实时显示在该模板中的匹配位置，帮助你确认补丁作用点。</v-card-subtitle>
       </v-card-item>
 
       <v-card-text>
         <v-row>
-          <v-col cols="12" md="8">
+          <v-col cols="12" md="5">
             <v-text-field v-model="patchForm.name" label="补丁名称" maxlength="255" />
           </v-col>
-          <v-col cols="12" md="4">
+          <v-col cols="12" md="3">
             <v-text-field v-model="patchForm.description" label="描述" maxlength="255" />
+          </v-col>
+          <v-col cols="12" md="4">
+            <v-select
+              v-model="patchAuthoringTemplateId"
+              :items="templates"
+              item-title="name"
+              item-value="id"
+              label="路径校验目标模板"
+              :disabled="templates.length === 0"
+              hint="仅用于辅助书写路径，不会保存到补丁本身。"
+              persistent-hint
+            />
           </v-col>
           <v-col cols="12">
             <div class="d-flex flex-column flex-sm-row ga-3 align-sm-center justify-space-between mb-3">
@@ -820,6 +1092,8 @@ async function previewCompositeDraft(): Promise<void> {
                 border="sm"
                 rounded="xl"
                 variant="outlined"
+                :class="{ 'patch-operation-card--active': operation.id === activePatchOperationId }"
+                @click="setActivePatchOperation(operation.id)"
               >
                 <v-card-item>
                   <div class="d-flex flex-column flex-md-row ga-3 justify-space-between">
@@ -828,15 +1102,16 @@ async function previewCompositeDraft(): Promise<void> {
                       <v-card-subtitle class="px-0">{{ operationDescription(operation.op) }}</v-card-subtitle>
                     </div>
                     <div class="d-flex ga-2 align-start">
-                      <v-btn icon="mdi-arrow-up" size="small" variant="text" :disabled="index === 0" @click="movePatchOperation(index, -1)" />
+                      <v-chip v-if="operation.id === activePatchOperationId" size="small" color="primary" variant="tonal">当前编辑路径</v-chip>
+                      <v-btn icon="mdi-arrow-up" size="small" variant="text" :disabled="index === 0" @click.stop="movePatchOperation(index, -1)" />
                       <v-btn
                         icon="mdi-arrow-down"
                         size="small"
                         variant="text"
                         :disabled="index === patchForm.operations.length - 1"
-                        @click="movePatchOperation(index, 1)"
+                        @click.stop="movePatchOperation(index, 1)"
                       />
-                      <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="removePatchOperation(index)" />
+                      <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click.stop="removePatchOperation(index)" />
                     </div>
                   </div>
                 </v-card-item>
@@ -844,12 +1119,10 @@ async function previewCompositeDraft(): Promise<void> {
                 <v-card-text>
                   <v-row>
                     <v-col cols="12" md="4">
-                      <v-select
+                      <SegmentedPicker
                         :model-value="operation.op"
-                        :items="PATCH_OPERATION_OPTIONS"
-                        item-title="title"
-                        item-value="value"
-                        label="操作类型"
+                        :items="PATCH_OPERATION_OPTIONS.map((item) => ({ ...item, shortTitle: item.title }))"
+                        aria-label="操作类型"
                         @update:model-value="updatePatchOperationKind(operation, $event)"
                       />
                     </v-col>
@@ -860,7 +1133,56 @@ async function previewCompositeDraft(): Promise<void> {
                         placeholder="proxy-groups.0.proxies"
                         hint="使用点号路径；数组下标写数字。"
                         persistent-hint
-                      />
+                        @focus="setActivePatchOperation(operation.id)"
+                      >
+                        <template #append-inner>
+                          <v-btn
+                            icon="mdi-file-tree-outline"
+                            size="small"
+                            variant="text"
+                            @click.stop="openPathPicker(operation.id)"
+                          />
+                        </template>
+                      </v-text-field>
+                    </v-col>
+                    <v-col cols="12">
+                      <v-alert :type="pathPreviewFor(operation.id).ok ? 'success' : 'info'" variant="tonal" density="comfortable">
+                        <div class="font-weight-medium">{{ pathPreviewFor(operation.id).message }}</div>
+                        <template v-if="pathPreviewFor(operation.id).ok && pathContextFor(operation.id).lines.length > 0">
+                          <div class="text-caption text-medium-emphasis mt-2">目标模板上下文</div>
+                          <div class="yaml-context-panel mt-2">
+                            <template v-for="line in visibleContextLines(operation.id)" :key="`${operation.id}-${line.lineNumber}`">
+                              <div v-if="shouldShowContextFoldBefore(operation.id, line.lineNumber)" class="yaml-context-fold">
+                                <v-btn
+                                  size="small"
+                                  variant="text"
+                                  prepend-icon="mdi-unfold-more-horizontal"
+                                  @click="expandContext(operation.id)"
+                                >
+                                  展开隐藏的 {{ hiddenContextLineCount(operation.id) }} 行
+                                </v-btn>
+                              </div>
+                              <div
+                                class="yaml-context-line"
+                                :class="{ 'yaml-context-line--match': line.isMatch }"
+                              >
+                                <div class="yaml-context-line__number">{{ line.lineNumber }}</div>
+                                <pre class="yaml-context-line__code"><template v-for="(token, tokenIndex) in line.tokens" :key="`${line.lineNumber}-${tokenIndex}`"><span :class="`yaml-token yaml-token--${token.kind}`">{{ token.text }}</span></template></pre>
+                              </div>
+                              <div v-if="shouldShowContextCollapseAfter(operation.id, line.lineNumber)" class="yaml-context-fold">
+                                <v-btn
+                                  size="small"
+                                  variant="text"
+                                  prepend-icon="mdi-unfold-less-horizontal"
+                                  @click="collapseContext(operation.id)"
+                                >
+                                  收起已展开的块
+                                </v-btn>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+                      </v-alert>
                     </v-col>
 
                     <v-col v-if="requiresIndex(operation.op)" cols="12" md="4">
@@ -919,6 +1241,61 @@ async function previewCompositeDraft(): Promise<void> {
         <v-spacer />
         <v-btn variant="text" @click="patchDialog = false">取消</v-btn>
         <v-btn color="primary" :disabled="busy || !canSubmitPatch" @click="savePatch">保存</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <v-dialog v-model="pathPickerDialog" max-width="960">
+    <v-card>
+      <v-card-item>
+        <v-card-title>选择模板路径</v-card-title>
+        <v-card-subtitle>点击树中的节点，会把路径写入当前选中的补丁操作。</v-card-subtitle>
+      </v-card-item>
+
+      <v-card-text>
+        <div class="d-flex flex-column ga-4">
+          <v-alert v-if="!activePatchOperation" type="info" variant="tonal">
+            请先在补丁操作里选中一个目标路径输入框。
+          </v-alert>
+          <v-alert v-else type="success" variant="tonal">
+            当前正在编辑：第 {{ patchForm.operations.findIndex((operation) => operation.id === activePatchOperationId) + 1 }} 步
+          </v-alert>
+
+          <v-alert v-if="!patchAuthoringTemplate" type="info" variant="tonal">
+            请选择一个目标模板以浏览路径。
+          </v-alert>
+          <v-alert v-else-if="typeof patchAuthoringDocument === 'string'" type="warning" variant="tonal">
+            {{ patchAuthoringDocument }}
+          </v-alert>
+          <template v-else>
+            <v-text-field
+              v-model="pathPickerSearch"
+              label="搜索路径节点"
+              placeholder="输入 key、路径或预览值"
+              prepend-inner-icon="mdi-magnify"
+              clearable
+              hide-details
+            />
+            <div v-if="filteredPatchTreeNodes.length > 0" class="template-tree-panel">
+              <TemplatePathTree
+                :nodes="filteredPatchTreeNodes"
+                :active-path="activePatchOperation?.path ?? null"
+                :search-term="pathPickerSearch"
+                :collapsed-paths="collapsedTreePaths"
+                @select="applyTreePathToActiveOperation"
+                @toggle="toggleCollapsedTreePath"
+              />
+            </div>
+            <v-alert v-else type="info" variant="tonal">
+              没有匹配的路径节点。
+            </v-alert>
+          </template>
+        </div>
+      </v-card-text>
+
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="text" @click="closePathPicker">关闭</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -985,5 +1362,102 @@ async function previewCompositeDraft(): Promise<void> {
 .preview-panel pre {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.yaml-context-panel {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(var(--v-theme-surface), 1);
+}
+
+.yaml-context-fold {
+  display: flex;
+  justify-content: center;
+  padding: 0.35rem 0.75rem;
+  border-top: 1px dashed rgba(var(--v-border-color), 0.45);
+  background: rgba(var(--v-theme-surface-variant), 0.16);
+}
+
+
+.yaml-context-line {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  align-items: stretch;
+  font-family: ui-monospace, 'SFMono-Regular', 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.yaml-context-line + .yaml-context-line {
+  border-top: 1px solid rgba(var(--v-border-color), 0.35);
+}
+
+.yaml-context-line--match {
+  background: rgba(var(--v-theme-warning), 0.18);
+  box-shadow: inset 4px 0 0 rgb(var(--v-theme-warning));
+}
+
+.yaml-context-line--match .yaml-context-line__number {
+  color: rgb(var(--v-theme-warning));
+  font-weight: 700;
+  background: rgba(var(--v-theme-warning), 0.16);
+}
+
+.yaml-context-line__number {
+  padding: 0.35rem 0.5rem;
+  text-align: right;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  background: rgba(var(--v-theme-surface-variant), 0.55);
+  border-inline-end: 1px solid rgba(var(--v-border-color), 0.35);
+  user-select: none;
+}
+
+.yaml-context-line__code {
+  margin: 0;
+  padding: 0.35rem 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.yaml-token--key {
+  color: rgb(var(--v-theme-primary));
+  font-weight: 600;
+}
+
+.yaml-token--punctuation {
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+}
+
+.yaml-token--string {
+  color: rgb(var(--v-theme-success));
+}
+
+.yaml-token--number {
+  color: rgb(var(--v-theme-info));
+}
+
+.yaml-token--boolean,
+.yaml-token--null {
+  color: rgb(var(--v-theme-warning));
+}
+
+.yaml-token--comment {
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  font-style: italic;
+}
+
+.template-tree-panel {
+  max-height: 32rem;
+  overflow: auto;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 16px;
+  background: rgba(var(--v-theme-surface), 1);
+  padding: 0.5rem;
+}
+
+.patch-operation-card--active {
+  border-color: rgba(var(--v-theme-primary), 0.7) !important;
+  box-shadow: 0 0 0 1px rgba(var(--v-theme-primary), 0.24);
 }
 </style>
