@@ -132,6 +132,7 @@ const expandedContextOperationIds = ref<number[]>([])
 const patchEditorTab = ref<'lowCode' | 'json'>('lowCode')
 const patchJsonText = ref('[]')
 const patchJsonError = ref('')
+const patchEditorSyncing = ref(false)
 const suppressPatchJsonSync = ref(false)
 const patchForm = reactive<TemplatePatchForm>({
   name: '',
@@ -439,10 +440,13 @@ function parsePatchOperationsJson(raw: string): TemplatePatchOperation[] {
 
 function syncPatchJsonFromLowCode(): void {
   try {
+    patchEditorSyncing.value = true
     patchJsonText.value = JSON.stringify(buildPatchOperationsFromForm(), null, 2)
     patchJsonError.value = ''
   } catch (caught) {
     patchJsonError.value = caught instanceof Error ? caught.message : '补丁配置无效。'
+  } finally {
+    patchEditorSyncing.value = false
   }
 }
 
@@ -453,28 +457,47 @@ function setLowCodeOperations(operations: TemplatePatchOperation[]): void {
 
 function handlePatchJsonInput(value: string): void {
   patchJsonText.value = value
+  if (patchEditorSyncing.value) {
+    return
+  }
 
   try {
-    const operations = parsePatchOperationsJson(value)
-    suppressPatchJsonSync.value = true
-    setLowCodeOperations(operations)
+    parsePatchOperationsJson(value)
     patchJsonError.value = ''
   } catch (caught) {
     patchJsonError.value = caught instanceof Error ? caught.message : '原生 JSON 无法解析。'
-  } finally {
-    suppressPatchJsonSync.value = false
   }
 }
 
 watch(
-  () => patchForm.operations,
-  () => {
-    if (suppressPatchJsonSync.value) {
+  patchEditorTab,
+  (tab, previousTab) => {
+    if (tab === previousTab) {
       return
     }
-    syncPatchJsonFromLowCode()
+
+    if (tab === 'json') {
+      syncPatchJsonFromLowCode()
+      return
+    }
+
+    if (previousTab === 'json') {
+      try {
+        const operations = parsePatchOperationsJson(patchJsonText.value)
+        suppressPatchJsonSync.value = true
+        setLowCodeOperations(operations)
+        patchJsonError.value = ''
+      } catch (caught) {
+        patchJsonError.value = caught instanceof Error ? caught.message : '原生 JSON 无法解析。'
+        patchEditorSyncing.value = true
+        patchEditorTab.value = 'json'
+        patchEditorSyncing.value = false
+      } finally {
+        suppressPatchJsonSync.value = false
+      }
+    }
   },
-  { deep: true, immediate: true },
+  { flush: 'sync' },
 )
 
 
@@ -824,6 +847,7 @@ async function savePatch(): Promise<void> {
     : await store.updateTemplatePatch(patchEditingId.value, payload)
 
   if (succeeded) {
+    syncPatchJsonFromLowCode()
     patchDialog.value = false
     resetPatchForm()
   }
