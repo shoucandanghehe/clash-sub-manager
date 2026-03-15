@@ -8,14 +8,26 @@ import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 const PATCH_OPERATIONS_SCHEMA_URI = 'inmemory://schema/patch-operations.json'
 const MODEL_URI = monaco.Uri.parse('inmemory://model/patch-operations.json')
 const PATCH_OPERATION_NAMES = ['set', 'delete', 'merge', 'list_append', 'list_insert', 'list_remove', 'list_replace'] as const
+const OPERATION_FIELD_MAP: Record<(typeof PATCH_OPERATION_NAMES)[number], string[]> = {
+  set: ['op', 'path', 'value'],
+  delete: ['op', 'path'],
+  merge: ['op', 'path', 'value'],
+  list_append: ['op', 'path', 'value'],
+  list_insert: ['op', 'path', 'index', 'value'],
+  list_remove: ['op', 'path', 'value'],
+  list_replace: ['op', 'path', 'index', 'old_value', 'value'],
+}
+const DEFAULT_FIELDS = ['op', 'path', 'value', 'index', 'old_value']
 
 const props = withDefaults(
   defineProps<{
     modelValue: string
     height?: string
+    pathSuggestions?: string[]
   }>(),
   {
     height: '28rem',
+    pathSuggestions: () => [],
   },
 )
 
@@ -117,14 +129,16 @@ function setupPatchJsonCompletions(): void {
 
   completionDisposable = monaco.languages.registerCompletionItemProvider('json', {
     triggerCharacters: ['"', ':', '{', '[', ','],
-    provideCompletionItems(model, position) {
-      if (model.uri.toString() !== MODEL_URI.toString()) {
+    provideCompletionItems(currentModel, position) {
+      if (currentModel.uri.toString() !== MODEL_URI.toString()) {
         return { suggestions: [] }
       }
 
       const suggestions = [
-        ...createOperationValueSuggestions(model, position),
-        ...createOperationSnippetSuggestions(model, position),
+        ...createOperationValueSuggestions(currentModel, position),
+        ...createPathValueSuggestions(currentModel, position),
+        ...createFieldNameSuggestions(currentModel, position),
+        ...createOperationSnippetSuggestions(currentModel, position),
       ]
       return { suggestions }
     },
@@ -135,25 +149,61 @@ function createOperationValueSuggestions(
   currentModel: monaco.editor.ITextModel,
   position: monaco.Position,
 ): monaco.languages.CompletionItem[] {
-  const range = currentModel.getWordUntilPosition(position)
-  const wordRange = new monaco.Range(
-    position.lineNumber,
-    range.startColumn,
-    position.lineNumber,
-    range.endColumn,
-  )
-
-  if (!isInsideOpValue(currentModel, position)) {
+  if (!isInsidePropertyString(currentModel, position, 'op')) {
     return []
   }
 
+  const range = stringValueRange(currentModel, position)
   return PATCH_OPERATION_NAMES.map((name) => ({
     label: name,
     kind: monaco.languages.CompletionItemKind.EnumMember,
     insertText: name,
-    range: wordRange,
+    range,
     detail: '补丁操作类型',
     documentation: describeOperation(name),
+  }))
+}
+
+function createPathValueSuggestions(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+): monaco.languages.CompletionItem[] {
+  if (!isInsidePropertyString(currentModel, position, 'path')) {
+    return []
+  }
+
+  const range = stringValueRange(currentModel, position)
+  return props.pathSuggestions.map((path) => ({
+    label: path,
+    kind: monaco.languages.CompletionItemKind.Reference,
+    insertText: path,
+    range,
+    detail: '目标模板路径',
+    documentation: '来自当前路径校验目标模板的可用路径。',
+  }))
+}
+
+function createFieldNameSuggestions(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+): monaco.languages.CompletionItem[] {
+  if (!shouldOfferFieldSuggestions(currentModel, position)) {
+    return []
+  }
+
+  const line = currentModel.getLineContent(position.lineNumber)
+  const indent = line.match(/^\s*/)?.[0] ?? ''
+  const baseRange = new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column)
+  const operationName = guessCurrentOperation(currentModel, position)
+  const fields = operationName ? OPERATION_FIELD_MAP[operationName] : DEFAULT_FIELDS
+
+  return fields.map((field) => ({
+    label: field,
+    kind: monaco.languages.CompletionItemKind.Property,
+    insertText: fieldSnippet(field, indent),
+    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    range: baseRange,
+    detail: operationName ? `${operationName} 字段` : '补丁字段',
   }))
 }
 
@@ -243,14 +293,60 @@ function createSnippetSuggestion(
   }
 }
 
-function isInsideOpValue(currentModel: monaco.editor.ITextModel, position: monaco.Position): boolean {
+function isInsidePropertyString(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+  propertyName: string,
+): boolean {
   const linePrefix = currentModel.getLineContent(position.lineNumber).slice(0, position.column - 1)
-  return /"op"\s*:\s*"[^"]*$/.test(linePrefix)
+  return new RegExp(`"${propertyName}"\\s*:\\s*"[^"]*$`).test(linePrefix)
+}
+
+function stringValueRange(currentModel: monaco.editor.ITextModel, position: monaco.Position): monaco.Range {
+  const range = currentModel.getWordUntilPosition(position)
+  return new monaco.Range(
+    position.lineNumber,
+    range.startColumn,
+    position.lineNumber,
+    range.endColumn,
+  )
+}
+
+function shouldOfferFieldSuggestions(currentModel: monaco.editor.ITextModel, position: monaco.Position): boolean {
+  const linePrefix = currentModel.getLineContent(position.lineNumber).slice(0, position.column - 1)
+  return /{\s*$/.test(linePrefix) || /,\s*$/.test(linePrefix)
 }
 
 function shouldOfferObjectSnippets(currentModel: monaco.editor.ITextModel, position: monaco.Position): boolean {
   const linePrefix = currentModel.getLineContent(position.lineNumber).slice(0, position.column - 1)
   return /^\s*$/.test(linePrefix) || /\[\s*$/.test(linePrefix) || /,\s*$/.test(linePrefix)
+}
+
+function fieldSnippet(field: string, indent: string): string {
+  switch (field) {
+    case 'op':
+      return `${indent}"op": "$1"$0`
+    case 'path':
+      return `${indent}"path": "$1"$0`
+    case 'index':
+      return `${indent}"index": $1$0`
+    case 'old_value':
+      return `${indent}"old_value": $1$0`
+    default:
+      return `${indent}"${field}": $1$0`
+  }
+}
+
+function guessCurrentOperation(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+): (typeof PATCH_OPERATION_NAMES)[number] | null {
+  const fullText = currentModel.getValueInRange(
+    new monaco.Range(1, 1, position.lineNumber, currentModel.getLineMaxColumn(position.lineNumber)),
+  )
+  const matches = [...fullText.matchAll(/"op"\s*:\s*"([a-z_]+)"/g)]
+  const last = matches.at(-1)?.[1]
+  return PATCH_OPERATION_NAMES.find((name) => name === last) ?? null
 }
 
 function describeOperation(name: (typeof PATCH_OPERATION_NAMES)[number]): string {
@@ -322,6 +418,7 @@ watch(
 onBeforeUnmount(() => {
   editor?.dispose()
   model?.dispose()
+  completionDisposable?.dispose()
 })
 </script>
 

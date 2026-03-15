@@ -294,6 +294,11 @@ const patchTreeNodes = computed(() => {
 const filteredPatchTreeNodes = computed(() => {
   return filterTemplatePathTree(patchTreeNodes.value, pathPickerSearch.value)
 })
+const patchPathSuggestions = computed(() => {
+  return collectTemplatePaths(patchTreeNodes.value)
+})
+
+
 
 const activePatchOperation = computed(() => {
   return patchForm.operations.find((operation) => operation.id === activePatchOperationId.value) ?? null
@@ -394,6 +399,21 @@ function requiresIndex(op: PatchOperationKind): boolean {
   return INDEX_REQUIRED_OPERATIONS.has(op)
 }
 
+function collectTemplatePaths(nodes: Array<{ path: string; children: Array<{ path: string; children: unknown[] }> }>): string[] {
+  const paths: string[] = []
+
+  function visit(entries: Array<{ path: string; children: Array<{ path: string; children: unknown[] }> }>): void {
+    for (const entry of entries) {
+      paths.push(entry.path)
+      visit(entry.children as Array<{ path: string; children: Array<{ path: string; children: unknown[] }> }>)
+    }
+  }
+
+  visit(nodes)
+  return paths
+}
+
+
 function normalizePatchOperation(value: unknown, index: number): TemplatePatchOperation {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`第 ${index + 1} 条 JSON 操作必须是对象。`)
@@ -469,6 +489,22 @@ function handlePatchJsonInput(value: string): void {
     patchJsonError.value = caught instanceof Error ? caught.message : '原生 JSON 无法解析。'
   }
 }
+function formatPatchJson(): void {
+  try {
+    const operations = parsePatchOperationsJson(patchJsonText.value)
+    suppressPatchJsonSync.value = true
+    setLowCodeOperations(operations)
+    patchJsonError.value = ''
+    syncPatchJsonFromLowCode()
+  } catch (caught) {
+    patchJsonError.value = caught instanceof Error ? caught.message : '原生 JSON 无法解析。'
+    store.showError(patchJsonError.value)
+  } finally {
+    suppressPatchJsonSync.value = false
+  }
+}
+
+
 
 watch(
   patchEditorTab,
@@ -1343,14 +1379,25 @@ async function previewCompositeDraft(): Promise<void> {
 
               <v-window-item value="json">
                 <div class="d-flex flex-column ga-4">
-                  <div class="text-body-2 text-medium-emphasis">
-                    原生 JSON 编辑与低代码编辑支持延迟同步：仅在切换标签页、保存、打开或重置时互相同步，避免输入过程被覆盖。
+                  <div class="d-flex flex-column gap-2 flex-sm-row align-sm-center justify-space-between">
+                    <div class="text-body-2 text-medium-emphasis">
+                      原生 JSON 编辑与低代码编辑支持延迟同步：仅在切换标签页、保存、打开或重置时互相同步，避免输入过程被覆盖。
+                    </div>
+                    <v-btn
+                      color="primary"
+                      variant="tonal"
+                      prepend-icon="mdi-code-json"
+                      @click="formatPatchJson"
+                    >
+                      格式化 JSON
+                    </v-btn>
                   </div>
                   <v-alert v-if="patchJsonError" type="warning" variant="tonal">
                     {{ patchJsonError }}
                   </v-alert>
                   <MonacoJsonEditor
                     :model-value="patchJsonText"
+                    :path-suggestions="patchPathSuggestions"
                     height="32rem"
                     @update:model-value="handlePatchJsonInput"
                   />
