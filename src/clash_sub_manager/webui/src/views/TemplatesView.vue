@@ -129,6 +129,10 @@ const pathPickerDialog = ref(false)
 const pathPickerSearch = ref('')
 const collapsedTreePaths = ref<string[]>([])
 const expandedContextOperationIds = ref<number[]>([])
+const patchEditorTab = ref<'lowCode' | 'json'>('lowCode')
+const patchJsonText = ref('[]')
+const patchJsonError = ref('')
+const suppressPatchJsonSync = ref(false)
 const patchForm = reactive<TemplatePatchForm>({
   name: '',
   description: '',
@@ -191,19 +195,7 @@ const patchValidationMessage = computed(() => {
 })
 
 const canSubmitPatch = computed(() => {
-  return patchForm.name.trim().length > 0 && patchValidationMessage.value === ''
-})
-
-const generatedPatchJson = computed(() => {
-  if (patchForm.operations.length === 0) {
-    return '[]'
-  }
-
-  try {
-    return JSON.stringify(buildPatchOperationsFromForm(), null, 2)
-  } catch (caught) {
-    return caught instanceof Error ? caught.message : '补丁配置无效。'
-  }
+  return patchForm.name.trim().length > 0 && patchValidationMessage.value === '' && patchJsonError.value === ''
 })
 
 const canSubmitComposite = computed(() => {
@@ -400,6 +392,92 @@ function requiresIndex(op: PatchOperationKind): boolean {
   return INDEX_REQUIRED_OPERATIONS.has(op)
 }
 
+function normalizePatchOperation(value: unknown, index: number): TemplatePatchOperation {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`第 ${index + 1} 条 JSON 操作必须是对象。`)
+  }
+
+  const candidate = value as Record<string, unknown>
+  if (typeof candidate.op !== 'string') {
+    throw new Error(`第 ${index + 1} 条 JSON 操作缺少字符串类型的 op。`)
+  }
+  if (typeof candidate.path !== 'string') {
+    throw new Error(`第 ${index + 1} 条 JSON 操作缺少字符串类型的 path。`)
+  }
+
+  const operation: TemplatePatchOperation = {
+    op: candidate.op as PatchOperationKind,
+    path: candidate.path,
+  }
+
+  if ('value' in candidate) {
+    operation.value = candidate.value
+  }
+  if (typeof candidate.index === 'number') {
+    operation.index = candidate.index
+  }
+  if ('old_value' in candidate) {
+    operation.old_value = candidate.old_value
+  }
+  return operation
+}
+
+function parsePatchOperationsJson(raw: string): TemplatePatchOperation[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('原生 JSON 不是合法 JSON。')
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error('原生 JSON 必须是操作数组。')
+  }
+
+  return parsed.map((entry, index) => normalizePatchOperation(entry, index))
+}
+
+function syncPatchJsonFromLowCode(): void {
+  try {
+    patchJsonText.value = JSON.stringify(buildPatchOperationsFromForm(), null, 2)
+    patchJsonError.value = ''
+  } catch (caught) {
+    patchJsonError.value = caught instanceof Error ? caught.message : '补丁配置无效。'
+  }
+}
+
+function setLowCodeOperations(operations: TemplatePatchOperation[]): void {
+  patchForm.operations = operations.map((operation) => patchRowFromOperation(operation))
+  activePatchOperationId.value = patchForm.operations[0]?.id ?? null
+}
+
+function handlePatchJsonInput(value: string): void {
+  patchJsonText.value = value
+
+  try {
+    const operations = parsePatchOperationsJson(value)
+    suppressPatchJsonSync.value = true
+    setLowCodeOperations(operations)
+    patchJsonError.value = ''
+  } catch (caught) {
+    patchJsonError.value = caught instanceof Error ? caught.message : '原生 JSON 无法解析。'
+  } finally {
+    suppressPatchJsonSync.value = false
+  }
+}
+
+watch(
+  () => patchForm.operations,
+  () => {
+    if (suppressPatchJsonSync.value) {
+      return
+    }
+    syncPatchJsonFromLowCode()
+  },
+  { deep: true, immediate: true },
+)
+
+
 function operationDescription(op: PatchOperationKind): string {
   return PATCH_OPERATION_OPTIONS.find((option) => option.value === op)?.description ?? ''
 }
@@ -587,10 +665,6 @@ async function saveTemplate(): Promise<void> {
 }
 
 function buildPatchOperationsFromForm(): TemplatePatchOperation[] {
-  if (patchForm.operations.length === 0) {
-    throw new Error('至少需要一个补丁操作。')
-  }
-
   return patchForm.operations.map((row, index) => {
     const rowNumber = index + 1
     const path = row.path.trim()
@@ -628,11 +702,15 @@ function buildPatchOperationsFromForm(): TemplatePatchOperation[] {
 
 function resetPatchForm(): void {
   patchEditingId.value = null
+  patchEditorTab.value = 'lowCode'
   patchForm.name = ''
   patchForm.description = ''
   patchForm.operations = [createPatchOperationRow()]
   activePatchOperationId.value = patchForm.operations[0]?.id ?? null
   patchAuthoringTemplateId.value = templates.value.find((template) => template.is_default)?.id ?? templates.value[0]?.id ?? null
+  expandedContextOperationIds.value = []
+  patchJsonError.value = ''
+  syncPatchJsonFromLowCode()
 }
 
 function addPatchOperation(op: PatchOperationKind = 'list_append'): void {
@@ -643,11 +721,6 @@ function addPatchOperation(op: PatchOperationKind = 'list_append'): void {
 
 function removePatchOperation(index: number): void {
   const removedId = patchForm.operations[index]?.id ?? null
-  if (patchForm.operations.length === 1) {
-    patchForm.operations[0] = createPatchOperationRow(patchForm.operations[0].op)
-    activePatchOperationId.value = patchForm.operations[0]?.id ?? null
-    return
-  }
   patchForm.operations.splice(index, 1)
   if (removedId !== null && activePatchOperationId.value === removedId) {
     activePatchOperationId.value = patchForm.operations[index]?.id ?? patchForm.operations[index - 1]?.id ?? null
@@ -675,12 +748,15 @@ function openCreatePatchDialog(): void {
 
 function openEditPatchDialog(patch: TemplatePatchRecord): void {
   patchEditingId.value = patch.id
+  patchEditorTab.value = 'lowCode'
   selectedPatchId.value = patch.id
   patchForm.name = patch.name
   patchForm.description = patch.description ?? ''
-  patchForm.operations = patch.operations.map((operation) => patchRowFromOperation(operation))
-  activePatchOperationId.value = patchForm.operations[0]?.id ?? null
+  setLowCodeOperations(patch.operations)
   patchAuthoringTemplateId.value = templates.value.find((template) => template.is_default)?.id ?? templates.value[0]?.id ?? null
+  expandedContextOperationIds.value = []
+  patchJsonError.value = ''
+  syncPatchJsonFromLowCode()
   patchDialog.value = true
 }
 
@@ -719,14 +795,22 @@ function closePathPicker(): void {
   pathPickerSearch.value = ''
 }
 
-
 async function savePatch(): Promise<void> {
+  if (patchJsonError.value) {
+    store.showError(patchJsonError.value)
+    return
+  }
+
   let operations: TemplatePatchOperation[]
   try {
-    operations = buildPatchOperationsFromForm()
+    operations = parsePatchOperationsJson(patchJsonText.value)
+    suppressPatchJsonSync.value = true
+    setLowCodeOperations(operations)
   } catch (caught) {
-    store.showError(caught instanceof Error ? caught.message : '补丁配置无效。')
+    store.showError(caught instanceof Error ? caught.message : '原生 JSON 无法解析。')
     return
+  } finally {
+    suppressPatchJsonSync.value = false
   }
 
   const payload: TemplatePatchPayload = {
@@ -1073,166 +1157,183 @@ async function previewCompositeDraft(): Promise<void> {
             />
           </v-col>
           <v-col cols="12">
-            <div class="d-flex flex-column flex-sm-row ga-3 align-sm-center justify-space-between mb-3">
-              <div>
-                <div class="text-subtitle-1 font-weight-medium">补丁操作序列</div>
-                <div class="text-body-2 text-medium-emphasis">每条操作按显示顺序执行，顺序变化会影响最终结果。</div>
-              </div>
-              <v-btn color="primary" prepend-icon="mdi-plus" variant="tonal" @click="addPatchOperation()">添加操作</v-btn>
-            </div>
+            <v-tabs v-model="patchEditorTab" color="primary" class="mb-4">
+              <v-tab value="lowCode">低代码编辑</v-tab>
+              <v-tab value="json">原生 JSON 编辑</v-tab>
+            </v-tabs>
 
-            <v-alert v-if="patchValidationMessage" type="warning" variant="tonal" class="mb-4">
-              {{ patchValidationMessage }}
-            </v-alert>
-
-            <div class="d-flex flex-column ga-4">
-              <v-card
-                v-for="(operation, index) in patchForm.operations"
-                :key="operation.id"
-                border="sm"
-                rounded="xl"
-                variant="outlined"
-                :class="{ 'patch-operation-card--active': operation.id === activePatchOperationId }"
-                @click="setActivePatchOperation(operation.id)"
-              >
-                <v-card-item>
-                  <div class="d-flex flex-column flex-md-row ga-3 justify-space-between">
-                    <div>
-                      <v-card-title class="px-0">第 {{ index + 1 }} 步</v-card-title>
-                      <v-card-subtitle class="px-0">{{ operationDescription(operation.op) }}</v-card-subtitle>
-                    </div>
-                    <div class="d-flex ga-2 align-start">
-                      <v-chip v-if="operation.id === activePatchOperationId" size="small" color="primary" variant="tonal">当前编辑路径</v-chip>
-                      <v-btn icon="mdi-arrow-up" size="small" variant="text" :disabled="index === 0" @click.stop="movePatchOperation(index, -1)" />
-                      <v-btn
-                        icon="mdi-arrow-down"
-                        size="small"
-                        variant="text"
-                        :disabled="index === patchForm.operations.length - 1"
-                        @click.stop="movePatchOperation(index, 1)"
-                      />
-                      <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click.stop="removePatchOperation(index)" />
-                    </div>
+            <v-window v-model="patchEditorTab">
+              <v-window-item value="lowCode">
+                <div class="d-flex flex-column flex-sm-row ga-3 align-sm-center justify-space-between mb-3">
+                  <div>
+                    <div class="text-subtitle-1 font-weight-medium">补丁操作序列</div>
+                    <div class="text-body-2 text-medium-emphasis">低代码编辑会实时同步到原生 JSON 标签页。</div>
                   </div>
-                </v-card-item>
+                  <v-btn color="primary" prepend-icon="mdi-plus" variant="tonal" @click="addPatchOperation()">添加操作</v-btn>
+                </div>
 
-                <v-card-text>
-                  <v-row>
-                    <v-col cols="12" md="4">
-                      <SegmentedPicker
-                        :model-value="operation.op"
-                        :items="PATCH_OPERATION_OPTIONS.map((item) => ({ ...item, shortTitle: item.title }))"
-                        aria-label="操作类型"
-                        @update:model-value="updatePatchOperationKind(operation, $event)"
-                      />
-                    </v-col>
-                    <v-col cols="12" md="8">
-                      <v-text-field
-                        v-model="operation.path"
-                        label="路径"
-                        placeholder="proxy-groups.0.proxies"
-                        hint="使用点号路径；数组下标写数字。"
-                        persistent-hint
-                        @focus="setActivePatchOperation(operation.id)"
-                      >
-                        <template #append-inner>
+                <v-alert v-if="patchValidationMessage" type="warning" variant="tonal" class="mb-4">
+                  {{ patchValidationMessage }}
+                </v-alert>
+
+                <v-alert v-if="patchForm.operations.length === 0" type="info" variant="tonal" class="mb-4">
+                  当前没有补丁操作。点击“添加操作”，或切换到“原生 JSON 编辑”直接粘贴操作数组。
+                </v-alert>
+
+                <div class="d-flex flex-column ga-4">
+                  <v-card
+                    v-for="(operation, index) in patchForm.operations"
+                    :key="operation.id"
+                    border="sm"
+                    rounded="xl"
+                    variant="outlined"
+                    :class="{ 'patch-operation-card--active': operation.id === activePatchOperationId }"
+                    @click="setActivePatchOperation(operation.id)"
+                  >
+                    <v-card-item>
+                      <div class="d-flex flex-column flex-md-row ga-3 justify-space-between">
+                        <div>
+                          <v-card-title class="px-0">第 {{ index + 1 }} 步</v-card-title>
+                          <v-card-subtitle class="px-0">{{ operationDescription(operation.op) }}</v-card-subtitle>
+                        </div>
+                        <div class="d-flex ga-2 align-start">
+                          <v-chip v-if="operation.id === activePatchOperationId" size="small" color="primary" variant="tonal">当前编辑路径</v-chip>
+                          <v-btn icon="mdi-arrow-up" size="small" variant="text" :disabled="index === 0" @click.stop="movePatchOperation(index, -1)" />
                           <v-btn
-                            icon="mdi-file-tree-outline"
+                            icon="mdi-arrow-down"
                             size="small"
                             variant="text"
-                            @click.stop="openPathPicker(operation.id)"
+                            :disabled="index === patchForm.operations.length - 1"
+                            @click.stop="movePatchOperation(index, 1)"
                           />
-                        </template>
-                      </v-text-field>
-                    </v-col>
-                    <v-col cols="12">
-                      <v-alert :type="pathPreviewFor(operation.id).ok ? 'success' : 'info'" variant="tonal" density="comfortable">
-                        <div class="font-weight-medium">{{ pathPreviewFor(operation.id).message }}</div>
-                        <template v-if="pathPreviewFor(operation.id).ok && pathContextFor(operation.id).lines.length > 0">
-                          <div class="text-caption text-medium-emphasis mt-2">目标模板上下文</div>
-                          <div class="yaml-context-panel mt-2">
-                            <template v-for="line in visibleContextLines(operation.id)" :key="`${operation.id}-${line.lineNumber}`">
-                              <div v-if="shouldShowContextFoldBefore(operation.id, line.lineNumber)" class="yaml-context-fold">
-                                <v-btn
-                                  size="small"
-                                  variant="text"
-                                  prepend-icon="mdi-unfold-more-horizontal"
-                                  @click="expandContext(operation.id)"
-                                >
-                                  展开隐藏的 {{ hiddenContextLineCount(operation.id) }} 行
-                                </v-btn>
-                              </div>
-                              <div
-                                class="yaml-context-line"
-                                :class="{ 'yaml-context-line--match': line.isMatch }"
-                              >
-                                <div class="yaml-context-line__number">{{ line.lineNumber }}</div>
-                                <pre class="yaml-context-line__code"><template v-for="(token, tokenIndex) in line.tokens" :key="`${line.lineNumber}-${tokenIndex}`"><span :class="`yaml-token yaml-token--${token.kind}`">{{ token.text }}</span></template></pre>
-                              </div>
-                              <div v-if="shouldShowContextCollapseAfter(operation.id, line.lineNumber)" class="yaml-context-fold">
-                                <v-btn
-                                  size="small"
-                                  variant="text"
-                                  prepend-icon="mdi-unfold-less-horizontal"
-                                  @click="collapseContext(operation.id)"
-                                >
-                                  收起已展开的块
-                                </v-btn>
+                          <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click.stop="removePatchOperation(index)" />
+                        </div>
+                      </div>
+                    </v-card-item>
+
+                    <v-card-text>
+                      <v-row>
+                        <v-col cols="12" md="4">
+                          <SegmentedPicker
+                            :model-value="operation.op"
+                            :items="PATCH_OPERATION_OPTIONS.map((item) => ({ ...item, shortTitle: item.title }))"
+                            aria-label="操作类型"
+                            @update:model-value="updatePatchOperationKind(operation, $event)"
+                          />
+                        </v-col>
+                        <v-col cols="12" md="8">
+                          <v-text-field
+                            v-model="operation.path"
+                            label="路径"
+                            placeholder="proxy-groups.0.proxies"
+                            hint="使用点号路径；数组下标写数字。"
+                            persistent-hint
+                            @focus="setActivePatchOperation(operation.id)"
+                          >
+                            <template #append-inner>
+                              <v-btn
+                                icon="mdi-file-tree-outline"
+                                size="small"
+                                variant="text"
+                                @click.stop="openPathPicker(operation.id)"
+                              />
+                            </template>
+                          </v-text-field>
+                        </v-col>
+                        <v-col cols="12">
+                          <v-alert :type="pathPreviewFor(operation.id).ok ? 'success' : 'info'" variant="tonal" density="comfortable">
+                            <div class="font-weight-medium">{{ pathPreviewFor(operation.id).message }}</div>
+                            <template v-if="pathPreviewFor(operation.id).ok && pathContextFor(operation.id).lines.length > 0">
+                              <div class="text-caption text-medium-emphasis mt-2">目标模板上下文</div>
+                              <div class="yaml-context-panel mt-2">
+                                <template v-for="line in visibleContextLines(operation.id)" :key="`${operation.id}-${line.lineNumber}`">
+                                  <div v-if="shouldShowContextFoldBefore(operation.id, line.lineNumber)" class="yaml-context-fold">
+                                    <v-btn
+                                      size="small"
+                                      variant="text"
+                                      prepend-icon="mdi-unfold-more-horizontal"
+                                      @click="expandContext(operation.id)"
+                                    >
+                                      展开隐藏的 {{ hiddenContextLineCount(operation.id) }} 行
+                                    </v-btn>
+                                  </div>
+                                  <div
+                                    class="yaml-context-line"
+                                    :class="{ 'yaml-context-line--match': line.isMatch }"
+                                  >
+                                    <div class="yaml-context-line__number">{{ line.lineNumber }}</div>
+                                    <pre class="yaml-context-line__code"><template v-for="(token, tokenIndex) in line.tokens" :key="`${line.lineNumber}-${tokenIndex}`"><span :class="`yaml-token yaml-token--${token.kind}`">{{ token.text }}</span></template></pre>
+                                  </div>
+                                  <div v-if="shouldShowContextCollapseAfter(operation.id, line.lineNumber)" class="yaml-context-fold">
+                                    <v-btn
+                                      size="small"
+                                      variant="text"
+                                      prepend-icon="mdi-unfold-less-horizontal"
+                                      @click="collapseContext(operation.id)"
+                                    >
+                                      收起已展开的块
+                                    </v-btn>
+                                  </div>
+                                </template>
                               </div>
                             </template>
-                          </div>
-                        </template>
-                      </v-alert>
-                    </v-col>
+                          </v-alert>
+                        </v-col>
 
-                    <v-col v-if="requiresIndex(operation.op)" cols="12" md="4">
-                      <v-text-field
-                        v-model="operation.indexText"
-                        label="索引"
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                      />
-                    </v-col>
+                        <v-col v-if="requiresIndex(operation.op)" cols="12" md="4">
+                          <v-text-field
+                            v-model="operation.indexText"
+                            label="索引"
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                          />
+                        </v-col>
 
-                    <v-col v-if="requiresValue(operation.op)" cols="12" :md="requiresIndex(operation.op) ? 8 : 12">
-                      <StructuredValueEditor
-                        :node="operation.valueEditor"
-                        :factory="valueFactory"
-                        label="value"
-                        :allow-null="operation.op !== 'merge'"
-                      />
-                    </v-col>
+                        <v-col v-if="requiresValue(operation.op)" cols="12" :md="requiresIndex(operation.op) ? 8 : 12">
+                          <StructuredValueEditor
+                            :node="operation.valueEditor"
+                            :factory="valueFactory"
+                            label="value"
+                            :allow-null="operation.op !== 'merge'"
+                          />
+                        </v-col>
 
-                    <v-col v-if="operation.op === 'list_replace'" cols="12">
-                      <v-switch v-model="operation.useOldValue" label="启用 old_value 校验" hide-details />
-                    </v-col>
+                        <v-col v-if="operation.op === 'list_replace'" cols="12">
+                          <v-switch v-model="operation.useOldValue" label="启用 old_value 校验" hide-details />
+                        </v-col>
 
-                    <v-col v-if="operation.op === 'list_replace' && operation.useOldValue" cols="12">
-                      <StructuredValueEditor
-                        :node="operation.oldValueEditor"
-                        :factory="valueFactory"
-                        label="old_value"
-                      />
-                    </v-col>
-                  </v-row>
-                </v-card-text>
-              </v-card>
-            </div>
-          </v-col>
+                        <v-col v-if="operation.op === 'list_replace' && operation.useOldValue" cols="12">
+                          <StructuredValueEditor
+                            :node="operation.oldValueEditor"
+                            :factory="valueFactory"
+                            label="old_value"
+                          />
+                        </v-col>
+                      </v-row>
+                    </v-card-text>
+                  </v-card>
+                </div>
+              </v-window-item>
 
-          <v-col cols="12">
-            <v-card border="sm" rounded="xl" variant="tonal">
-              <v-card-item>
-                <v-card-title class="px-0">生成后的 JSON</v-card-title>
-                <v-card-subtitle class="px-0">结构化表单最终会转换成下面这份补丁 JSON。</v-card-subtitle>
-              </v-card-item>
-              <v-card-text>
-                <v-sheet class="preview-panel" color="surface" rounded="xl">
-                  <pre>{{ generatedPatchJson }}</pre>
-                </v-sheet>
-              </v-card-text>
-            </v-card>
+              <v-window-item value="json">
+                <div class="d-flex flex-column ga-4">
+                  <div class="text-body-2 text-medium-emphasis">
+                    原生 JSON 编辑与低代码编辑双向同步。这里填写合法的操作数组后，低代码节点会自动刷新。
+                  </div>
+                  <v-alert v-if="patchJsonError" type="warning" variant="tonal">
+                    {{ patchJsonError }}
+                  </v-alert>
+                  <v-textarea
+                    :model-value="patchJsonText"
+                    label="补丁操作 JSON 数组"
+                    rows="20"
+                    auto-grow
+                    @update:model-value="handlePatchJsonInput(String($event ?? ''))"
+                  />
+                </div>
+              </v-window-item>
+            </v-window>
           </v-col>
         </v-row>
       </v-card-text>
