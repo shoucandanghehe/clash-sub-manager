@@ -300,6 +300,15 @@ const patchPathSuggestions = computed(() => {
 
 
 
+const patchPathEntries = computed<TemplatePathEntry[]>(() => {
+  const documentOrError = patchAuthoringDocument.value
+  if (!documentOrError || typeof documentOrError === 'string') {
+    return []
+  }
+  return buildTemplatePathEntries(documentOrError)
+})
+
+
 const activePatchOperation = computed(() => {
   return patchForm.operations.find((operation) => operation.id === activePatchOperationId.value) ?? null
 })
@@ -1398,6 +1407,7 @@ async function previewCompositeDraft(): Promise<void> {
                   <MonacoJsonEditor
                     :model-value="patchJsonText"
                     :path-suggestions="patchPathSuggestions"
+                    :path-entries="patchPathEntries"
                     height="32rem"
                     @update:model-value="handlePatchJsonInput"
                   />

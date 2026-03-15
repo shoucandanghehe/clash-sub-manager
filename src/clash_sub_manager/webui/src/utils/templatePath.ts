@@ -14,6 +14,13 @@ export interface TemplatePathTreeNode {
   children: TemplatePathTreeNode[]
 }
 
+export interface TemplatePathEntry {
+  path: string
+  value: unknown
+  valuePreview: string
+  kind: 'scalar' | 'object' | 'array'
+}
+
 export interface YamlContextToken {
   text: string
   kind: 'plain' | 'key' | 'punctuation' | 'string' | 'number' | 'boolean' | 'null' | 'comment'
@@ -113,7 +120,7 @@ export function buildTemplatePathContext(
   matchedValue?: unknown,
   scalarRadius = 3,
   collectionRadius = 1,
- ): TemplatePathContext {
+): TemplatePathContext {
   const lineMap = buildYamlPathLineMap(content)
   const matchedLineNumber = resolveBestLineNumber(lineMap, rawPath)
   if (matchedLineNumber === null) {
@@ -159,6 +166,42 @@ export function buildTemplatePathContext(
 
 export function buildTemplatePathTree(document: Record<string, unknown>): TemplatePathTreeNode[] {
   return buildTreeChildren(document, '')
+}
+
+export function buildTemplatePathEntries(document: Record<string, unknown>): TemplatePathEntry[] {
+  const entries: TemplatePathEntry[] = []
+
+  function visit(value: unknown, parentPath: string): void {
+    if (Array.isArray(value)) {
+      for (const [index, entry] of value.entries()) {
+        const path = joinPath(parentPath, String(index))
+        entries.push({
+          path,
+          value: entry,
+          valuePreview: previewValue(entry),
+          kind: Array.isArray(entry) ? 'array' : isPlainObject(entry) ? 'object' : 'scalar',
+        })
+        visit(entry, path)
+      }
+      return
+    }
+
+    if (value && typeof value === 'object') {
+      for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+        const path = joinPath(parentPath, key)
+        entries.push({
+          path,
+          value: entry,
+          valuePreview: previewValue(entry),
+          kind: Array.isArray(entry) ? 'array' : isPlainObject(entry) ? 'object' : 'scalar',
+        })
+        visit(entry, path)
+      }
+    }
+  }
+
+  visit(document, '')
+  return entries
 }
 
 export function filterTemplatePathTree(
