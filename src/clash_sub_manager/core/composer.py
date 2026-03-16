@@ -25,13 +25,17 @@ class TemplateComposer:
             composed = self.patch_engine.apply(composed, patch.operations)
         return composed
 
+    @staticmethod
+    def render_document(document: dict[str, object]) -> str:
+        return yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+
     def render_cached_content(self, base_template: dict[str, object] | Template, patches: list[TemplatePatch]) -> str:
         document = self.compose(base_template, patches)
-        return yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+        return self.render_document(document)
 
     def refresh_composite(self, composite_template: CompositeTemplate, patches: list[TemplatePatch]) -> dict[str, object]:
         document = self.compose(composite_template.base_template, patches)
-        composite_template.cached_content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+        composite_template.cached_content = self.render_document(document)
         return document
 
     @staticmethod

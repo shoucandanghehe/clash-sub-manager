@@ -2,6 +2,7 @@
 import { storeToRefs } from 'pinia'
 import { computed, reactive, ref, watch } from 'vue'
 
+
 import type {
   CompositeTemplatePayload,
   CompositeTemplateRecord,
@@ -1006,6 +1007,7 @@ async function previewCompositeDraft(): Promise<void> {
   })
 }
 
+
 function buildLineDiff(before: string, after: string): DiffLine[] {
   const beforeLines = before.split('\n')
   const afterLines = after.split('\n')
@@ -1093,7 +1095,7 @@ const compositeDraftDiffBase = computed(() => {
 })
 
 const compositeDraftDiffLines = computed(() => {
-  if (!compositeTemplatePreview.value || !compositeDraftDiffBase.value) {
+  if (!compositeTemplatePreview.value) {
     return [] as DiffLine[]
   }
 
@@ -1633,47 +1635,37 @@ const compositeDraftHasDiff = computed(() => {
             <v-divider class="mb-4" />
             <div class="d-flex align-center justify-space-between mb-3">
               <div>
-                <div class="text-subtitle-1 font-weight-medium">草稿预览</div>
+                <div class="text-subtitle-1 font-weight-medium">草稿预览差异</div>
                 <div class="text-body-2 text-medium-emphasis">
                   {{ compositeTemplatePreviewName || '点击“预览”后查看当前草稿结果。' }}
                 </div>
               </div>
             </div>
-            <v-row>
-              <v-col cols="12" :md="editingComposite ? 6 : 12">
-                <v-sheet class="preview-panel" color="surface-variant" rounded="xl">
-                  <pre>{{ compositeTemplatePreview || '尚未生成组合模板预览。' }}</pre>
-                </v-sheet>
-              </v-col>
-              <v-col v-if="editingComposite" cols="12" md="6">
-                <div class="text-subtitle-2 mb-2">与已保存结果对比</div>
-                <v-sheet class="diff-panel" color="surface-variant" rounded="xl">
-                  <template v-if="!compositeTemplatePreview">
-                    <div class="text-body-2 text-medium-emphasis">先生成草稿预览，再查看差异。</div>
-                  </template>
-                  <template v-else-if="!compositeDraftHasDiff">
-                    <div class="text-body-2 text-medium-emphasis">草稿预览与已保存结果没有差异。</div>
-                  </template>
-                  <template v-else>
-                    <div
-                      v-for="(line, index) in compositeDraftDiffLines"
-                      :key="`${index}-${line.type}-${line.oldLineNumber ?? 'n'}-${line.newLineNumber ?? 'n'}`"
-                      class="diff-line"
-                      :class="{
-                        'diff-line--add': line.type === 'add',
-                        'diff-line--remove': line.type === 'remove',
-                      }"
-                    >
-                      <div class="diff-line__numbers">
-                        <span>{{ line.oldLineNumber ?? '' }}</span>
-                        <span>{{ line.newLineNumber ?? '' }}</span>
-                      </div>
-                      <pre class="diff-line__content">{{ line.content || ' ' }}</pre>
-                    </div>
-                  </template>
-                </v-sheet>
-              </v-col>
-            </v-row>
+            <v-sheet class="diff-panel" color="surface-variant" rounded="xl">
+              <template v-if="!compositeTemplatePreview">
+                <div class="text-body-2 text-medium-emphasis">先生成草稿预览，再查看差异。</div>
+              </template>
+              <template v-else-if="!compositeDraftHasDiff">
+                <div class="text-body-2 text-medium-emphasis">草稿预览与已保存结果没有差异。</div>
+              </template>
+              <template v-else>
+                <div
+                  v-for="(line, index) in compositeDraftDiffLines"
+                  :key="`${index}-${line.type}-${line.oldLineNumber ?? 'n'}-${line.newLineNumber ?? 'n'}`"
+                  class="diff-line"
+                  :class="{
+                    'diff-line--add': line.type === 'add',
+                    'diff-line--remove': line.type === 'remove',
+                  }"
+                >
+                  <div class="diff-line__numbers">
+                    <span>{{ line.oldLineNumber ?? '' }}</span>
+                    <span>{{ line.newLineNumber ?? '' }}</span>
+                  </div>
+                  <pre class="diff-line__content">{{ line.content || ' ' }}</pre>
+                </div>
+              </template>
+            </v-sheet>
           </v-col>
         </v-row>
       </v-card-text>
@@ -1727,11 +1719,13 @@ const compositeDraftHasDiff = computed(() => {
 }
 
 .diff-line--add {
-  background: rgba(var(--v-theme-success), 0.12);
+  background: rgba(var(--v-theme-success), 0.2);
+  box-shadow: inset 4px 0 0 rgb(var(--v-theme-success));
 }
 
 .diff-line--remove {
-  background: rgba(var(--v-theme-error), 0.12);
+  background: rgba(var(--v-theme-error), 0.2);
+  box-shadow: inset 4px 0 0 rgb(var(--v-theme-error));
 }
 
 .diff-line__numbers {
@@ -1744,6 +1738,18 @@ const compositeDraftHasDiff = computed(() => {
   background: rgba(var(--v-theme-surface-variant), 0.55);
   border-inline-end: 1px solid rgba(var(--v-border-color), 0.35);
   user-select: none;
+}
+
+.diff-line--add .diff-line__numbers {
+  color: rgb(var(--v-theme-success));
+  font-weight: 700;
+  background: rgba(var(--v-theme-success), 0.18);
+}
+
+.diff-line--remove .diff-line__numbers {
+  color: rgb(var(--v-theme-error));
+  font-weight: 700;
+  background: rgba(var(--v-theme-error), 0.18);
 }
 
 .diff-line__content {

@@ -147,7 +147,7 @@ export interface CompositePreviewPayload {
 }
 
 export interface CompositePreviewResponse {
-  content: Record<string, unknown>
+  content: string
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

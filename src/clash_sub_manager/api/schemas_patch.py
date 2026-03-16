@@ -165,7 +165,7 @@ class CompositeTemplatePreviewRequest(BaseModel):
 
 
 class CompositePreviewRead(BaseModel):
-    content: dict[str, object]
+    content: str
 
 
 __all__ = [

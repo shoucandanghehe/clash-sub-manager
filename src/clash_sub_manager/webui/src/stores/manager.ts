@@ -216,7 +216,7 @@ export const useManagerStore = defineStore('manager', () => {
     return run('已生成模板补丁预览。', async () => {
       const result = await api.previewTemplatePatch(id, baseTemplateId)
       const patch = templatePatches.value.find((item) => item.id === id)
-      templatePatchPreview.value = formatDocument(result.content)
+      templatePatchPreview.value = result.content
       templatePatchPreviewName.value = patch?.name ?? '模板补丁预览'
     })
   }
@@ -245,7 +245,7 @@ export const useManagerStore = defineStore('manager', () => {
   async function previewCompositeTemplate(payload: CompositeTemplatePayload): Promise<boolean> {
     return run('已生成组合模板预览。', async () => {
       const result = await api.previewCompositeTemplate(payload)
-      compositeTemplatePreview.value = formatDocument(result.content)
+      compositeTemplatePreview.value = result.content
       compositeTemplatePreviewName.value = payload.name.trim() || '组合模板预览'
     })
   }

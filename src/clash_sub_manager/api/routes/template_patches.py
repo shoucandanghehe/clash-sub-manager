@@ -112,7 +112,7 @@ async def preview_template_patch(
     base_template = await _get_template_or_404(db, payload.base_template_id)
 
     try:
-        content = TemplateComposer().compose(base_template, [patch])
+        content = TemplateComposer().render_cached_content(base_template, [patch])
         return CompositePreviewRead(content=content)
     except (PatchValidationError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc

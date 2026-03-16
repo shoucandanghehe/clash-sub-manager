@@ -272,14 +272,14 @@ def test_template_patch_and_composite_template_endpoints(client: TestClient) -> 
         json={'base_template_id': template_id},
     )
     assert patch_preview.status_code == 200
-    assert patch_preview.json()['content']['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-A']
+    assert yaml.safe_load(patch_preview.json()['content'])['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-A']
 
     composite_preview = client.post(
         '/composite-templates/preview',
         json={'base_template_id': template_id, 'patch_sequence': [append_patch_id, replace_patch_id]},
     )
     assert composite_preview.status_code == 200
-    assert composite_preview.json()['content']['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-B']
+    assert yaml.safe_load(composite_preview.json()['content'])['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-B']
 
     composite_create = client.post(
         '/composite-templates',
@@ -374,4 +374,4 @@ def test_template_patch_list_remove_requires_index_and_supports_old_value(client
         json={'base_template_id': template_id},
     )
     assert patch_preview.status_code == 200
-    assert patch_preview.json()['content']['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-B']
+    assert yaml.safe_load(patch_preview.json()['content'])['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-B']
