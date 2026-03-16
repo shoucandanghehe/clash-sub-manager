@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from .. import __version__
 from ..db import create_engine, init_db, normalize_async_db_url
 from .routes import api_router
 
@@ -35,7 +36,7 @@ def create_app(*, db_url: str | None = None) -> FastAPI:
     """Create the application instance."""
 
     normalized_db_url = normalize_async_db_url(db_url or 'sqlite+aiosqlite:///./clash_sub_manager.db')
-    app = FastAPI(title='Clash Sub Manager', version='0.1.0', lifespan=_build_lifespan(normalized_db_url))
+    app = FastAPI(title='Clash Sub Manager', version=__version__, lifespan=_build_lifespan(normalized_db_url))
     app.include_router(api_router)
     if WEBUI_STATIC.exists():
         app.mount('/ui', StaticFiles(directory=WEBUI_STATIC, html=True), name='webui')
