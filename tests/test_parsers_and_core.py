@@ -248,7 +248,7 @@ def test_patch_engine_applies_ordered_operations_without_mutating_input() -> Non
         'rules': ['MATCH,Auto'],
         'metadata': {'owner': 'base', 'flags': {'stable': True}},
     }
-    operations = [
+    operations: list[dict[str, object]] = [
         {'op': 'set', 'path': 'proxy-groups.0.name', 'value': 'Patched'},
         {'op': 'list_insert', 'path': 'proxy-groups.0.proxies', 'index': 1, 'value': 'Node-B'},
         {'op': 'list_replace', 'path': 'proxy-groups.0.proxies', 'index': 2, 'old_value': 'Node-A', 'value': 'Node-C'},
@@ -258,6 +258,7 @@ def test_patch_engine_applies_ordered_operations_without_mutating_input() -> Non
     ]
 
     rendered = engine.apply(template, operations)
+    rendered_proxy_groups = cast(list[dict[str, object]], rendered['proxy-groups'])
 
     assert rendered == {
         'proxy-groups': [
@@ -266,6 +267,7 @@ def test_patch_engine_applies_ordered_operations_without_mutating_input() -> Non
         'rules': ['MATCH,Auto', 'DOMAIN,example.com,Patched'],
         'metadata': {'flags': {'stable': False}, 'tag': 'derived'},
     }
+    assert rendered_proxy_groups[0]['proxies'] == ['DIRECT', 'Node-B', 'Node-C']
     assert template == {
         'proxy-groups': [
             {'name': 'Auto', 'proxies': ['DIRECT', 'Node-A']},
@@ -331,9 +333,11 @@ def test_patch_engine_list_remove_uses_index_and_optional_old_value() -> None:
             {'op': 'list_remove', 'path': 'proxy-groups.0.proxies', 'index': 1, 'old_value': 'Node-A'},
         ],
     )
+    rendered_proxy_groups = cast(list[dict[str, object]], rendered['proxy-groups'])
+    template_proxy_groups = cast(list[dict[str, object]], template['proxy-groups'])
 
-    assert rendered['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-B']
-    assert template['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-A', 'Node-B']
+    assert rendered_proxy_groups[0]['proxies'] == ['DIRECT', 'Node-B']
+    assert template_proxy_groups[0]['proxies'] == ['DIRECT', 'Node-A', 'Node-B']
 
 
 def test_patch_engine_list_remove_rejects_old_value_mismatch() -> None:

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 if TYPE_CHECKING:
-    from .models import Template
+    from .models import MergeProfile, Template
 
 
 def _utc_now() -> datetime:
@@ -41,6 +41,7 @@ class CompositeTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(default=_utc_now, onupdate=_utc_now)
 
     base_template: Mapped[Template] = relationship(back_populates='composite_templates')
+    merge_profiles: Mapped[list[MergeProfile]] = relationship(back_populates='composite_template')
 
 
 __all__ = ['CompositeTemplate', 'TemplatePatch']

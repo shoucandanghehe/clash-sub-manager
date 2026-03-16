@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...core import PatchValidationError, TemplateComposer
-from ...db import CompositeTemplate, Template, TemplatePatch
+from ...db import CompositeTemplate, MergeProfile, Template, TemplatePatch
 from ..dependencies import get_db_session
 from ..schemas import TemplateSummaryRead
 from ..schemas_patch import (
@@ -181,6 +181,12 @@ async def update_composite_template(
 @router.delete('/composite-templates/{composite_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_composite_template(composite_id: int, db: DbSession) -> Response:
     composite = await _get_composite_template_or_404(composite_id, db)
+    merge_profile = await db.scalar(select(MergeProfile.name).where(MergeProfile.composite_template_id == composite_id))
+    if merge_profile is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'composite template is used by merge profile: {merge_profile}',
+        )
     await db.delete(composite)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

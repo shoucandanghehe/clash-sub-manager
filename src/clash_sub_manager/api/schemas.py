@@ -200,18 +200,40 @@ class YamlPreviewRead(BaseModel):
     content: str
 
 
+class TemplateSourceRead(BaseModel):
+    id: int
+    name: str
+    kind: str
+
+
+class TemplateSourceInput(BaseModel):
+    kind: str | None = None
+    id: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode='after')
+    def validate_source(self):
+        has_kind = self.kind is not None
+        has_id = self.id is not None
+        if has_kind != has_id:
+            msg = 'template_source requires both kind and id'
+            raise ValueError(msg)
+        if self.kind is not None and self.kind not in {'template', 'composite'}:
+            msg = 'template_source kind must be template or composite'
+            raise ValueError(msg)
+        return self
+
+
 class MergeProfileRead(BaseModel):
     id: int
     name: str
     enabled: bool
-    template_id: int | None
-    template: TemplateSummaryRead | None
+    template_source: TemplateSourceRead | None
     subscriptions: list[SubscriptionSummaryRead]
 
 
 class MergeProfileCreate(BaseModel):
     name: str = Field(min_length=1)
-    template_id: int | None = None
+    template_source: TemplateSourceInput | None = None
     enabled: bool = True
     subscription_ids: list[int] = Field(min_length=1)
 
@@ -228,7 +250,7 @@ class MergeProfileCreate(BaseModel):
 
 class MergeProfileUpdate(BaseModel):
     name: str | None = None
-    template_id: int | None = None
+    template_source: TemplateSourceInput | None = None
     enabled: bool | None = None
     subscription_ids: list[int] | None = None
 
@@ -259,6 +281,8 @@ __all__ = [
     'SubscriptionUpdate',
     'TemplateCreate',
     'TemplateRead',
+    'TemplateSourceInput',
+    'TemplateSourceRead',
     'TemplateSummaryRead',
     'TemplateUpdate',
     'YamlPreviewRead',

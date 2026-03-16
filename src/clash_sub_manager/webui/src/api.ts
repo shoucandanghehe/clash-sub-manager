@@ -71,12 +71,17 @@ export interface CompositeTemplateRecord {
   patches: TemplatePatchSummaryRecord[]
 }
 
+export interface TemplateSourceRecord {
+  id: number
+  name: string
+  kind: 'template' | 'composite'
+}
+
 export interface MergeProfileRecord {
   id: number
   name: string
   enabled: boolean
-  template_id: number | null
-  template: TemplateSummaryRecord | null
+  template_source: TemplateSourceRecord | null
   subscriptions: SubscriptionSummaryRecord[]
 }
 
@@ -118,7 +123,7 @@ export interface RuleSourcePayload {
 
 export interface MergeProfilePayload {
   name: string
-  template_id?: number | null
+  template_source?: TemplateSourceRecord | null
   enabled?: boolean
   subscription_ids: number[]
 }

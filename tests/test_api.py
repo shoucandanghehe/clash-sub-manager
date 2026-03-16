@@ -180,14 +180,14 @@ def test_merge_profile_crud_and_generate(client: TestClient) -> None:
         '/merge-profiles',
         json={
             'name': 'daily-profile',
-            'template_id': template_response.json()['id'],
+            'template_source': {'kind': 'template', 'id': template_response.json()['id']},
             'subscription_ids': [first_subscription.json()['id'], second_subscription.json()['id']],
         },
     )
     assert create_response.status_code == 201
     created = create_response.json()
     assert created['name'] == 'daily-profile'
-    assert created['template']['name'] == 'daily'
+    assert created['template_source'] == {'id': template_response.json()['id'], 'name': 'daily', 'kind': 'template'}
     assert [subscription['name'] for subscription in created['subscriptions']] == ['alpha', 'beta']
 
     list_response = client.get('/merge-profiles')
@@ -222,6 +222,71 @@ def test_merge_profile_crud_and_generate(client: TestClient) -> None:
     delete_response = client.delete(f"/merge-profiles/{created['id']}")
     assert delete_response.status_code == 204
 
+
+def test_merge_profile_accepts_composite_template(client: TestClient) -> None:
+    subscription_response = client.post(
+        '/subscriptions',
+        json={'name': 'beta', 'content': 'trojan://secret2@example.com:443#Beta'},
+    )
+    template_response = client.post(
+        '/templates',
+        json={
+            'name': 'daily',
+            'content': (
+                'proxy-groups:\n'
+                '  - name: Select\n'
+                '    type: select\n'
+                '    proxies:\n'
+                '      - DIRECT\n'
+                'rules:\n'
+                '  - MATCH,Select'
+            ),
+        },
+    )
+    patch_response = client.post(
+        '/template-patches',
+        json={
+            'name': 'append-beta',
+            'operations': [
+                {'op': 'list_insert', 'path': 'proxy-groups.0.proxies', 'index': 0, 'value': 'Beta'},
+            ],
+        },
+    )
+    assert subscription_response.status_code == 201
+    assert template_response.status_code == 201
+    assert patch_response.status_code == 201
+
+    composite_response = client.post(
+        '/composite-templates',
+        json={
+            'name': 'derived-select',
+            'base_template_id': template_response.json()['id'],
+            'patch_sequence': [patch_response.json()['id']],
+        },
+    )
+    assert composite_response.status_code == 201
+    composite_id = composite_response.json()['id']
+
+    profile_response = client.post(
+        '/merge-profiles',
+        json={
+            'name': 'composite-profile',
+            'template_source': {'kind': 'composite', 'id': composite_id},
+            'subscription_ids': [subscription_response.json()['id']],
+        },
+    )
+    assert profile_response.status_code == 201
+    created_profile = profile_response.json()
+    assert created_profile['template_source'] == {'id': composite_id, 'name': 'derived-select', 'kind': 'composite'}
+
+    generated_response = client.post(f"/merge-profiles/{created_profile['id']}/generate")
+    assert generated_response.status_code == 200
+    generated = yaml.safe_load(generated_response.json()['content'])
+    assert generated['proxy-groups'][0]['proxies'][0] == 'Beta'
+
+    blocked_delete = client.delete(f'/composite-templates/{composite_id}')
+    assert blocked_delete.status_code == 409
+    assert blocked_delete.json() == {'detail': 'composite template is used by merge profile: composite-profile'}
 
 def test_template_patch_and_composite_template_endpoints(client: TestClient) -> None:
     template_response = client.post(

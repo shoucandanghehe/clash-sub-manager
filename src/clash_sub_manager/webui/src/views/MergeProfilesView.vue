@@ -2,14 +2,19 @@
 import { storeToRefs } from 'pinia'
 import { computed, reactive, ref } from 'vue'
 
-import type { MergeProfilePayload, MergeProfileRecord } from '../api'
+import type { MergeProfilePayload, MergeProfileRecord, TemplateSourceRecord } from '../api'
 import { useManagerStore } from '../stores/manager'
 
 interface MergeProfileForm {
   name: string
-  templateId: number | null
+  templateSource: string | null
   subscriptionIds: number[]
   enabled: boolean
+}
+
+interface TemplateSourceOption {
+  title: string
+  value: string
 }
 
 const emit = defineEmits<{
@@ -17,13 +22,13 @@ const emit = defineEmits<{
 }>()
 
 const store = useManagerStore()
-const { busy, mergeProfiles, subscriptions, templates } = storeToRefs(store)
+const { busy, compositeTemplates, mergeProfiles, subscriptions, templates } = storeToRefs(store)
 
 const dialog = ref(false)
 const editingId = ref<number | null>(null)
 const form = reactive<MergeProfileForm>({
   name: '',
-  templateId: null,
+  templateSource: null,
   subscriptionIds: [],
   enabled: true,
 })
@@ -47,7 +52,7 @@ const canSubmit = computed(() => {
 function resetForm(): void {
   editingId.value = null
   form.name = ''
-  form.templateId = null
+  form.templateSource = null
   form.subscriptionIds = []
   form.enabled = true
 }
@@ -57,19 +62,69 @@ function openCreateDialog(): void {
   dialog.value = true
 }
 
+function formatTemplateSourceValue(source: TemplateSourceRecord | null): string | null {
+  return source ? `${source.kind}:${source.id}` : null
+}
+
+function parseTemplateSourceValue(value: string | null): TemplateSourceRecord | null {
+  if (!value) {
+    return null
+  }
+
+  const [kind, idText] = value.split(':', 2)
+  if ((kind !== 'template' && kind !== 'composite') || !idText || !/^\d+$/.test(idText)) {
+    throw new Error('模板来源无效。')
+  }
+
+  const id = Number(idText)
+  const source =
+    kind === 'template'
+      ? templates.value.find((template) => template.id === id)
+      : compositeTemplates.value.find((template) => template.id === id)
+
+  if (!source) {
+    throw new Error('所选模板不存在。')
+  }
+
+  return {
+    id,
+    kind,
+    name: source.name,
+  }
+}
+
+const templateSourceOptions = computed<TemplateSourceOption[]>(() => [
+  ...templates.value.map((template) => ({
+    title: `[基础] ${template.name}`,
+    value: `template:${template.id}`,
+  })),
+  ...compositeTemplates.value.map((template) => ({
+    title: `[组合] ${template.name}`,
+    value: `composite:${template.id}`,
+  })),
+])
+
 function openEditDialog(profile: MergeProfileRecord): void {
   editingId.value = profile.id
   form.name = profile.name
-  form.templateId = profile.template_id
+  form.templateSource = formatTemplateSourceValue(profile.template_source)
   form.subscriptionIds = profile.subscriptions.map((subscription) => subscription.id)
   form.enabled = profile.enabled
   dialog.value = true
 }
 
 async function saveProfile(): Promise<void> {
+  let templateSource: TemplateSourceRecord | null
+  try {
+    templateSource = parseTemplateSourceValue(form.templateSource)
+  } catch (caught) {
+    store.showError(caught instanceof Error ? caught.message : '模板来源无效。')
+    return
+  }
+
   const payload: MergeProfilePayload = {
     name: form.name.trim(),
-    template_id: form.templateId,
+    template_source: templateSource,
     enabled: form.enabled,
     subscription_ids: [...form.subscriptionIds],
   }
@@ -134,7 +189,7 @@ async function copyProfileLink(profile: MergeProfileRecord): Promise<void> {
       </template>
 
       <template #item.template="{ item }">
-        <v-chip size="small" variant="tonal">{{ item.template?.name ?? '无模板' }}</v-chip>
+        <v-chip size="small" variant="tonal">{{ item.template_source ? `${item.template_source.kind === 'template' ? '基础' : '组合'} · ${item.template_source.name}` : '无模板' }}</v-chip>
       </template>
 
       <template #item.enabled="{ item }">
@@ -168,10 +223,10 @@ async function copyProfileLink(profile: MergeProfileRecord): Promise<void> {
           </v-col>
           <v-col cols="12" md="6">
             <v-select
-              v-model="form.templateId"
-              :items="templates"
-              item-title="name"
-              item-value="id"
+              v-model="form.templateSource"
+              :items="templateSourceOptions"
+              item-title="title"
+              item-value="value"
               label="模板"
               clearable
             />

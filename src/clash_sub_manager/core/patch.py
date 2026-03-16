@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Final
 
@@ -26,14 +27,18 @@ class PatchValidationError(ValueError):
 class PatchEngine:
     """Apply ordered, atomic patch operations to a template mapping."""
 
-    def apply(self, template: dict[str, object], operations: list[dict[str, object]]) -> dict[str, object]:
-        if not isinstance(template, dict):
+    def apply(
+        self,
+        template: Mapping[str, object],
+        operations: Sequence[Mapping[str, object]],
+    ) -> dict[str, object]:
+        if not isinstance(template, Mapping):
             msg = 'template must be a mapping'
             raise TypeError(msg)
 
-        updated = deepcopy(template)
+        updated = deepcopy(dict(template))
         for index, operation in enumerate(operations):
-            self._apply_operation(updated, operation, operation_index=index)
+            self._apply_operation(updated, dict(operation), operation_index=index)
         return updated
 
     def _apply_operation(

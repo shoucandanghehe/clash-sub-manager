@@ -65,9 +65,11 @@ class MergeProfile(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True)
     template_id: Mapped[int | None] = mapped_column(ForeignKey('templates.id'), nullable=True)
+    composite_template_id: Mapped[int | None] = mapped_column(ForeignKey('composite_templates.id'), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
 
     template: Mapped[Template | None] = relationship(back_populates='merge_profiles')
+    composite_template: Mapped[CompositeTemplate | None] = relationship(back_populates='merge_profiles')
     subscriptions: Mapped[list[Subscription]] = relationship(
         secondary=merge_profile_subscriptions,
         back_populates='merge_profiles',
