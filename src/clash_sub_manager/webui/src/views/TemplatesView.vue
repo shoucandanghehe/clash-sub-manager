@@ -196,7 +196,7 @@ const patchValidationMessage = computed(() => {
 })
 
 const canSubmitPatch = computed(() => {
-  return patchForm.name.trim().length > 0 && patchValidationMessage.value === '' && patchJsonError.value === ''
+  return patchForm.name.trim().length > 0 && patchValidationMessage.value === '' && (patchEditorTab.value !== 'json' || patchJsonError.value === '')
 })
 
 const canSubmitComposite = computed(() => {
@@ -452,6 +452,10 @@ function normalizePatchOperation(value: unknown, index: number): TemplatePatchOp
   return operation
 }
 
+function finalizePatchOperations(operations: unknown[]): TemplatePatchOperation[] {
+  return operations.map((entry, index) => normalizePatchOperation(entry, index))
+}
+
 function parsePatchOperationsJson(raw: string): TemplatePatchOperation[] {
   let parsed: unknown
   try {
@@ -464,13 +468,13 @@ function parsePatchOperationsJson(raw: string): TemplatePatchOperation[] {
     throw new Error('原生 JSON 必须是操作数组。')
   }
 
-  return parsed.map((entry, index) => normalizePatchOperation(entry, index))
+  return finalizePatchOperations(parsed)
 }
 
 function syncPatchJsonFromLowCode(): void {
   try {
     patchEditorSyncing.value = true
-    patchJsonText.value = JSON.stringify(buildPatchOperationsFromForm(), null, 2)
+    patchJsonText.value = JSON.stringify(finalizePatchOperations(buildPatchOperationsFromForm()), null, 2)
     patchJsonError.value = ''
   } catch (caught) {
     patchJsonError.value = caught instanceof Error ? caught.message : '补丁配置无效。'
@@ -864,21 +868,31 @@ function closePathPicker(): void {
 }
 
 async function savePatch(): Promise<void> {
-  if (patchJsonError.value) {
-    store.showError(patchJsonError.value)
-    return
-  }
-
   let operations: TemplatePatchOperation[]
-  try {
-    operations = parsePatchOperationsJson(patchJsonText.value)
-    suppressPatchJsonSync.value = true
-    setLowCodeOperations(operations)
-  } catch (caught) {
-    store.showError(caught instanceof Error ? caught.message : '原生 JSON 无法解析。')
-    return
-  } finally {
-    suppressPatchJsonSync.value = false
+  if (patchEditorTab.value === 'json') {
+    if (patchJsonError.value) {
+      store.showError(patchJsonError.value)
+      return
+    }
+
+    try {
+      operations = parsePatchOperationsJson(patchJsonText.value)
+      suppressPatchJsonSync.value = true
+      setLowCodeOperations(operations)
+    } catch (caught) {
+      store.showError(caught instanceof Error ? caught.message : '原生 JSON 无法解析。')
+      return
+    } finally {
+      suppressPatchJsonSync.value = false
+    }
+  } else {
+    try {
+      operations = finalizePatchOperations(buildPatchOperationsFromForm())
+      patchJsonError.value = ''
+    } catch (caught) {
+      store.showError(caught instanceof Error ? caught.message : '补丁配置无效。')
+      return
+    }
   }
 
   const payload: TemplatePatchPayload = {
