@@ -886,7 +886,6 @@ async function savePatch(): Promise<void> {
     description: patchForm.description.trim() || null,
     operations,
   }
-
   const succeeded = patchEditingId.value === null
     ? await store.createTemplatePatch(payload)
     : await store.updateTemplatePatch(patchEditingId.value, payload)
@@ -983,7 +982,6 @@ async function previewCompositeDraft(): Promise<void> {
             <div class="d-flex flex-column flex-sm-row ga-4 align-sm-center justify-space-between">
               <div>
                 <v-card-title class="px-0">基础模板管理</v-card-title>
-                <v-card-subtitle class="px-0">基础模板保存原始 Clash YAML，供预览、合并和组合模板复用。</v-card-subtitle>
               </div>
               <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateTemplateDialog">新建基础模板</v-btn>
             </div>
@@ -1035,7 +1033,6 @@ async function previewCompositeDraft(): Promise<void> {
             <div class="d-flex flex-column flex-sm-row ga-4 align-sm-center justify-space-between">
               <div>
                 <v-card-title class="px-0">模板补丁管理</v-card-title>
-                <v-card-subtitle class="px-0">补丁以最小操作序列修改模板内容，顺序会被严格保留。</v-card-subtitle>
               </div>
               <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreatePatchDialog">新建模板补丁</v-btn>
             </div>
@@ -1110,7 +1107,6 @@ async function previewCompositeDraft(): Promise<void> {
             <div class="d-flex flex-column flex-sm-row ga-4 align-sm-center justify-space-between">
               <div>
                 <v-card-title class="px-0">组合模板管理</v-card-title>
-                <v-card-subtitle class="px-0">组合模板把基础模板和补丁序列固化成可复用结果，并缓存最终 YAML。</v-card-subtitle>
               </div>
               <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateCompositeDialog">新建组合模板</v-btn>
             </div>
@@ -1144,12 +1140,12 @@ async function previewCompositeDraft(): Promise<void> {
       <v-col cols="12" lg="5">
         <v-card class="mb-4">
           <v-card-item>
-            <v-card-title class="px-0">组合模板缓存结果</v-card-title>
+            <v-card-title class="px-0">组合模板结果</v-card-title>
             <v-card-subtitle class="px-0">{{ selectedComposite?.name ?? '尚未选择组合模板' }}</v-card-subtitle>
           </v-card-item>
           <v-card-text>
             <v-sheet class="preview-panel" color="surface-variant" rounded="xl">
-              <pre>{{ selectedComposite?.cached_content ?? '从左侧选择组合模板，即可在这里查看缓存结果。' }}</pre>
+              <pre>{{ selectedComposite?.cached_content ?? '从左侧选择组合模板，即可在这里查看结果。' }}</pre>
             </v-sheet>
           </v-card-text>
         </v-card>
@@ -1173,7 +1169,6 @@ async function previewCompositeDraft(): Promise<void> {
     <v-card>
       <v-card-item>
         <v-card-title>{{ templateDialogTitle }}</v-card-title>
-        <v-card-subtitle>基础模板内容必须是合法 YAML 映射，组合模板会以它为起点。</v-card-subtitle>
       </v-card-item>
 
       <v-card-text>
@@ -1202,7 +1197,6 @@ async function previewCompositeDraft(): Promise<void> {
     <v-card>
       <v-card-item>
         <v-card-title>{{ patchDialogTitle }}</v-card-title>
-        <v-card-subtitle>选择目标模板后，输入路径会实时显示在该模板中的匹配位置，帮助你确认补丁作用点。</v-card-subtitle>
       </v-card-item>
 
       <v-card-text>
@@ -1219,10 +1213,8 @@ async function previewCompositeDraft(): Promise<void> {
               :items="templates"
               item-title="name"
               item-value="id"
-              label="路径校验目标模板"
+              label="路径参考模板"
               :disabled="templates.length === 0"
-              hint="仅用于辅助书写路径，不会保存到补丁本身。"
-              persistent-hint
             />
           </v-col>
           <v-col cols="12">
@@ -1236,7 +1228,6 @@ async function previewCompositeDraft(): Promise<void> {
                 <div class="d-flex flex-column flex-sm-row ga-3 align-sm-center justify-space-between mb-3">
                   <div>
                     <div class="text-subtitle-1 font-weight-medium">补丁操作序列</div>
-                    <div class="text-body-2 text-medium-emphasis">低代码编辑会实时同步到原生 JSON 标签页。</div>
                   </div>
                   <v-btn color="primary" prepend-icon="mdi-plus" variant="tonal" @click="addPatchOperation()">添加操作</v-btn>
                 </div>
@@ -1387,10 +1378,7 @@ async function previewCompositeDraft(): Promise<void> {
 
               <v-window-item value="json">
                 <div class="d-flex flex-column ga-4">
-                  <div class="d-flex flex-column gap-2 flex-sm-row align-sm-center justify-space-between">
-                    <div class="text-body-2 text-medium-emphasis">
-                      原生 JSON 编辑与低代码编辑支持延迟同步：仅在切换标签页、保存、打开或重置时互相同步，避免输入过程被覆盖。
-                    </div>
+                  <div class="d-flex justify-end">
                     <v-btn
                       color="primary"
                       variant="tonal"
@@ -1429,7 +1417,6 @@ async function previewCompositeDraft(): Promise<void> {
     <v-card>
       <v-card-item>
         <v-card-title>选择模板路径</v-card-title>
-        <v-card-subtitle>点击树中的节点，会把路径写入当前选中的补丁操作。</v-card-subtitle>
       </v-card-item>
 
       <v-card-text>
@@ -1484,7 +1471,6 @@ async function previewCompositeDraft(): Promise<void> {
     <v-card>
       <v-card-item>
         <v-card-title>{{ compositeDialogTitle }}</v-card-title>
-        <v-card-subtitle>选择基础模板和补丁顺序，系统会按当前顺序生成并缓存最终结果。</v-card-subtitle>
       </v-card-item>
 
       <v-card-text>

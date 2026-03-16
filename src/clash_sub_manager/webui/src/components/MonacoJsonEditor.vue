@@ -189,8 +189,8 @@ function createPathValueSuggestions(
     kind: monaco.languages.CompletionItemKind.Reference,
     insertText: path,
     range,
-    detail: '目标模板路径',
-    documentation: '来自当前路径校验目标模板的可用路径。',
+    detail: '参考模板路径',
+    documentation: '来自当前参考模板的可用路径。',
   }))
 }
 
