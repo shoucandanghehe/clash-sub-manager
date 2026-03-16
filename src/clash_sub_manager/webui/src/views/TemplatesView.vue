@@ -424,15 +424,15 @@ function collectTemplatePaths(nodes: Array<{ path: string; children: Array<{ pat
 
 function normalizePatchOperation(value: unknown, index: number): TemplatePatchOperation {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(`第 ${index + 1} 条 JSON 操作必须是对象。`)
+    throw new Error(`第 ${index + 1} 条操作必须是对象。`)
   }
 
   const candidate = value as Record<string, unknown>
   if (typeof candidate.op !== 'string') {
-    throw new Error(`第 ${index + 1} 条 JSON 操作缺少字符串类型的 op。`)
+    throw new Error(`第 ${index + 1} 条操作缺少 op。`)
   }
   if (typeof candidate.path !== 'string') {
-    throw new Error(`第 ${index + 1} 条 JSON 操作缺少字符串类型的 path。`)
+    throw new Error(`第 ${index + 1} 条操作缺少 path。`)
   }
 
   const operation: TemplatePatchOperation = {
@@ -452,6 +452,10 @@ function normalizePatchOperation(value: unknown, index: number): TemplatePatchOp
   return operation
 }
 
+function formatPatchError(caught: unknown, fallback = '补丁配置无效。'): string {
+  return caught instanceof Error ? caught.message : fallback
+}
+
 function finalizePatchOperations(operations: unknown[]): TemplatePatchOperation[] {
   return operations.map((entry, index) => normalizePatchOperation(entry, index))
 }
@@ -461,11 +465,11 @@ function parsePatchOperationsJson(raw: string): TemplatePatchOperation[] {
   try {
     parsed = JSON.parse(raw)
   } catch {
-    throw new Error('原生 JSON 不是合法 JSON。')
+    throw new Error('补丁 JSON 不是合法 JSON。')
   }
 
   if (!Array.isArray(parsed)) {
-    throw new Error('原生 JSON 必须是操作数组。')
+    throw new Error('补丁 JSON 必须是操作数组。')
   }
 
   return finalizePatchOperations(parsed)
@@ -477,7 +481,7 @@ function syncPatchJsonFromLowCode(): void {
     patchJsonText.value = JSON.stringify(finalizePatchOperations(buildPatchOperationsFromForm()), null, 2)
     patchJsonError.value = ''
   } catch (caught) {
-    patchJsonError.value = caught instanceof Error ? caught.message : '补丁配置无效。'
+    patchJsonError.value = formatPatchError(caught)
   } finally {
     patchEditorSyncing.value = false
   }
@@ -498,7 +502,7 @@ function handlePatchJsonInput(value: string): void {
     parsePatchOperationsJson(value)
     patchJsonError.value = ''
   } catch (caught) {
-    patchJsonError.value = caught instanceof Error ? caught.message : '原生 JSON 无法解析。'
+    patchJsonError.value = formatPatchError(caught, '补丁 JSON 无法解析。')
   }
 }
 function formatPatchJson(): void {
@@ -509,7 +513,7 @@ function formatPatchJson(): void {
     patchJsonError.value = ''
     syncPatchJsonFromLowCode()
   } catch (caught) {
-    patchJsonError.value = caught instanceof Error ? caught.message : '原生 JSON 无法解析。'
+    patchJsonError.value = formatPatchError(caught, '补丁 JSON 无法解析。')
     store.showError(patchJsonError.value)
   } finally {
     suppressPatchJsonSync.value = false
@@ -537,7 +541,7 @@ watch(
         setLowCodeOperations(operations)
         patchJsonError.value = ''
       } catch (caught) {
-        patchJsonError.value = caught instanceof Error ? caught.message : '原生 JSON 无法解析。'
+        patchJsonError.value = formatPatchError(caught, '补丁 JSON 无法解析。')
         patchEditorSyncing.value = true
         patchEditorTab.value = 'json'
         patchEditorSyncing.value = false
@@ -880,7 +884,7 @@ async function savePatch(): Promise<void> {
       suppressPatchJsonSync.value = true
       setLowCodeOperations(operations)
     } catch (caught) {
-      store.showError(caught instanceof Error ? caught.message : '原生 JSON 无法解析。')
+      store.showError(formatPatchError(caught, '补丁 JSON 无法解析。'))
       return
     } finally {
       suppressPatchJsonSync.value = false
@@ -890,7 +894,7 @@ async function savePatch(): Promise<void> {
       operations = finalizePatchOperations(buildPatchOperationsFromForm())
       patchJsonError.value = ''
     } catch (caught) {
-      store.showError(caught instanceof Error ? caught.message : '补丁配置无效。')
+      store.showError(formatPatchError(caught))
       return
     }
   }
