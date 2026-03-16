@@ -26,11 +26,13 @@ import {
 import { useManagerStore } from '../stores/manager'
 import {
   buildTemplatePathContext,
+  buildTemplatePathEntries,
   buildTemplatePathTree,
   filterTemplatePathTree,
   parseTemplateDocument,
   resolveTemplatePath,
   type TemplatePathContext,
+  type TemplatePathEntry,
   type TemplatePathResolution,
 } from '../utils/templatePath'
 
@@ -266,7 +268,16 @@ const patchPathContexts = computed<Record<number, TemplatePathContext>>(() => {
   const template = patchAuthoringTemplate.value
   if (!template) {
     return Object.fromEntries(
-      patchForm.operations.map((operation) => [operation.id, { matchedLineNumber: null, lines: [] }]),
+      patchForm.operations.map((operation) => [
+        operation.id,
+        {
+          matchedLineNumber: null,
+          matchedBlockStartLineNumber: null,
+          matchedBlockEndLineNumber: null,
+          isCollectionMatch: false,
+          lines: [],
+        },
+      ]),
     )
   }
 
@@ -1295,8 +1306,8 @@ async function previewCompositeDraft(): Promise<void> {
                           <SegmentedPicker
                             :model-value="operation.op"
                             :items="PATCH_OPERATION_OPTIONS.map((item) => ({ ...item, shortTitle: item.title }))"
-                            aria-label="操作类型"
-                            @update:model-value="updatePatchOperationKind(operation, $event)"
+                            ariaLabel="操作类型"
+                            @update:model-value="(value) => updatePatchOperationKind(operation, value as PatchOperationKind)"
                           />
                         </v-col>
                         <v-col cols="12" md="8">

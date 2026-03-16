@@ -67,7 +67,15 @@ function setupMonacoEnvironment(): void {
 }
 
 function setupJsonDiagnostics(): void {
-  monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+  const jsonDefaults = (monaco.languages as typeof monaco.languages & {
+    json: {
+      jsonDefaults: {
+        setDiagnosticsOptions(options: unknown): void
+      }
+    }
+  }).json.jsonDefaults
+
+  jsonDefaults.setDiagnosticsOptions({
     validate: true,
     allowComments: false,
     enableSchemaRequest: false,
@@ -418,7 +426,7 @@ function guessCurrentOperation(
     new monaco.Range(1, 1, position.lineNumber, currentModel.getLineMaxColumn(position.lineNumber)),
   )
   const matches = [...fullText.matchAll(/"op"\s*:\s*"([a-z_]+)"/g)]
-  const last = matches.at(-1)?.[1]
+  const last = matches.length > 0 ? matches[matches.length - 1]?.[1] : undefined
   return PATCH_OPERATION_NAMES.find((name) => name === last) ?? null
 }
 
@@ -430,7 +438,7 @@ function guessCurrentPath(
     new monaco.Range(1, 1, position.lineNumber, currentModel.getLineMaxColumn(position.lineNumber)),
   )
   const matches = [...fullText.matchAll(/"path"\s*:\s*"([^"]+)"/g)]
-  return matches.at(-1)?.[1] ?? null
+  return matches.length > 0 ? matches[matches.length - 1]?.[1] ?? null : null
 }
 
 function describeOperation(name: (typeof PATCH_OPERATION_NAMES)[number]): string {

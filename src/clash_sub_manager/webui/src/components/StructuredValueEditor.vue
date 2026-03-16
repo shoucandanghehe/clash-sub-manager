@@ -97,8 +97,8 @@ function objectEntryLabel(entry: StructuredObjectEntry, index: number): string {
       <SegmentedPicker
         :model-value="node.kind"
         :items="availableKindOptions()"
-        :aria-label="`${label} 类型`"
-        @update:model-value="changeKind"
+        :ariaLabel="`${label} 类型`"
+        @update:model-value="(value) => changeKind(value as StructuredValueKind)"
       />
     </div>
 
