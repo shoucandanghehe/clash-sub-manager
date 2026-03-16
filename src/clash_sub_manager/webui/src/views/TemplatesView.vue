@@ -940,6 +940,8 @@ function resetCompositeForm(): void {
   compositeForm.name = ''
   compositeForm.baseTemplateId = templates.value.find((template) => template.is_default)?.id ?? templates.value[0]?.id ?? null
   compositeForm.patchSequence = []
+  compositeTemplatePreview.value = ''
+  compositeTemplatePreviewName.value = ''
 }
 
 function openCreateCompositeDialog(): void {
@@ -953,6 +955,8 @@ function openEditCompositeDialog(composite: CompositeTemplateRecord): void {
   compositeForm.name = composite.name
   compositeForm.baseTemplateId = composite.base_template_id
   compositeForm.patchSequence = [...composite.patch_sequence]
+  compositeTemplatePreview.value = ''
+  compositeTemplatePreviewName.value = ''
   compositeDialog.value = true
 }
 
@@ -1179,17 +1183,6 @@ async function previewCompositeDraft(): Promise<void> {
           </v-card-text>
         </v-card>
 
-        <v-card class="fill-height">
-          <v-card-item>
-            <v-card-title class="px-0">组合模板草稿预览</v-card-title>
-            <v-card-subtitle class="px-0">{{ compositeTemplatePreviewName || '在编辑对话框中点击“预览”后会显示在这里。' }}</v-card-subtitle>
-          </v-card-item>
-          <v-card-text>
-            <v-sheet class="preview-panel" color="surface-variant" rounded="xl">
-              <pre>{{ compositeTemplatePreview || '尚未生成组合模板预览。' }}</pre>
-            </v-sheet>
-          </v-card-text>
-        </v-card>
       </v-col>
     </template>
   </v-row>
@@ -1526,6 +1519,20 @@ async function previewCompositeDraft(): Promise<void> {
               chips
               multiple
             />
+          </v-col>
+          <v-col cols="12">
+            <v-divider class="mb-4" />
+            <div class="d-flex align-center justify-space-between mb-3">
+              <div>
+                <div class="text-subtitle-1 font-weight-medium">草稿预览</div>
+                <div class="text-body-2 text-medium-emphasis">
+                  {{ compositeTemplatePreviewName || '点击“预览”后查看当前草稿结果。' }}
+                </div>
+              </div>
+            </div>
+            <v-sheet class="preview-panel" color="surface-variant" rounded="xl">
+              <pre>{{ compositeTemplatePreview || '尚未生成组合模板预览。' }}</pre>
+            </v-sheet>
           </v-col>
         </v-row>
       </v-card-text>
