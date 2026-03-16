@@ -39,6 +39,13 @@ import {
 type TemplateTab = 'templates' | 'patches' | 'composites'
 type PatchOperationKind = TemplatePatchOperation['op']
 
+interface DiffLine {
+  type: 'context' | 'add' | 'remove'
+  oldLineNumber: number | null
+  newLineNumber: number | null
+  content: string
+}
+
 interface TemplateForm {
   name: string
   content: string
@@ -215,6 +222,10 @@ const selectedPatch = computed(() => {
 
 const selectedComposite = computed(() => {
   return compositeTemplates.value.find((composite) => composite.id === selectedCompositeId.value) ?? null
+})
+
+const editingComposite = computed(() => {
+  return compositeTemplates.value.find((composite) => composite.id === compositeEditingId.value) ?? null
 })
 
 const patchAuthoringTemplate = computed(() => {
@@ -994,6 +1005,104 @@ async function previewCompositeDraft(): Promise<void> {
     patch_sequence: [...compositeForm.patchSequence],
   })
 }
+
+function buildLineDiff(before: string, after: string): DiffLine[] {
+  const beforeLines = before.split('\n')
+  const afterLines = after.split('\n')
+  const dp = Array.from({ length: beforeLines.length + 1 }, () => Array<number>(afterLines.length + 1).fill(0))
+
+  for (let i = beforeLines.length - 1; i >= 0; i -= 1) {
+    for (let j = afterLines.length - 1; j >= 0; j -= 1) {
+      if (beforeLines[i] === afterLines[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1])
+      }
+    }
+  }
+
+  const lines: DiffLine[] = []
+  let i = 0
+  let j = 0
+  let oldLineNumber = 1
+  let newLineNumber = 1
+
+  while (i < beforeLines.length && j < afterLines.length) {
+    if (beforeLines[i] === afterLines[j]) {
+      lines.push({
+        type: 'context',
+        oldLineNumber,
+        newLineNumber,
+        content: beforeLines[i],
+      })
+      i += 1
+      j += 1
+      oldLineNumber += 1
+      newLineNumber += 1
+      continue
+    }
+
+    if (dp[i + 1][j] >= dp[i][j + 1]) {
+      lines.push({
+        type: 'remove',
+        oldLineNumber,
+        newLineNumber: null,
+        content: beforeLines[i],
+      })
+      i += 1
+      oldLineNumber += 1
+    } else {
+      lines.push({
+        type: 'add',
+        oldLineNumber: null,
+        newLineNumber,
+        content: afterLines[j],
+      })
+      j += 1
+      newLineNumber += 1
+    }
+  }
+
+  while (i < beforeLines.length) {
+    lines.push({
+      type: 'remove',
+      oldLineNumber,
+      newLineNumber: null,
+      content: beforeLines[i],
+    })
+    i += 1
+    oldLineNumber += 1
+  }
+
+  while (j < afterLines.length) {
+    lines.push({
+      type: 'add',
+      oldLineNumber: null,
+      newLineNumber,
+      content: afterLines[j],
+    })
+    j += 1
+    newLineNumber += 1
+  }
+
+  return lines
+}
+
+const compositeDraftDiffBase = computed(() => {
+  return editingComposite.value?.cached_content ?? ''
+})
+
+const compositeDraftDiffLines = computed(() => {
+  if (!compositeTemplatePreview.value || !compositeDraftDiffBase.value) {
+    return [] as DiffLine[]
+  }
+
+  return buildLineDiff(compositeDraftDiffBase.value, compositeTemplatePreview.value)
+})
+
+const compositeDraftHasDiff = computed(() => {
+  return compositeDraftDiffLines.value.some((line) => line.type !== 'context')
+})
 </script>
 
 <template>
@@ -1530,9 +1639,41 @@ async function previewCompositeDraft(): Promise<void> {
                 </div>
               </div>
             </div>
-            <v-sheet class="preview-panel" color="surface-variant" rounded="xl">
-              <pre>{{ compositeTemplatePreview || '尚未生成组合模板预览。' }}</pre>
-            </v-sheet>
+            <v-row>
+              <v-col cols="12" :md="editingComposite ? 6 : 12">
+                <v-sheet class="preview-panel" color="surface-variant" rounded="xl">
+                  <pre>{{ compositeTemplatePreview || '尚未生成组合模板预览。' }}</pre>
+                </v-sheet>
+              </v-col>
+              <v-col v-if="editingComposite" cols="12" md="6">
+                <div class="text-subtitle-2 mb-2">与已保存结果对比</div>
+                <v-sheet class="diff-panel" color="surface-variant" rounded="xl">
+                  <template v-if="!compositeTemplatePreview">
+                    <div class="text-body-2 text-medium-emphasis">先生成草稿预览，再查看差异。</div>
+                  </template>
+                  <template v-else-if="!compositeDraftHasDiff">
+                    <div class="text-body-2 text-medium-emphasis">草稿预览与已保存结果没有差异。</div>
+                  </template>
+                  <template v-else>
+                    <div
+                      v-for="(line, index) in compositeDraftDiffLines"
+                      :key="`${index}-${line.type}-${line.oldLineNumber ?? 'n'}-${line.newLineNumber ?? 'n'}`"
+                      class="diff-line"
+                      :class="{
+                        'diff-line--add': line.type === 'add',
+                        'diff-line--remove': line.type === 'remove',
+                      }"
+                    >
+                      <div class="diff-line__numbers">
+                        <span>{{ line.oldLineNumber ?? '' }}</span>
+                        <span>{{ line.newLineNumber ?? '' }}</span>
+                      </div>
+                      <pre class="diff-line__content">{{ line.content || ' ' }}</pre>
+                    </div>
+                  </template>
+                </v-sheet>
+              </v-col>
+            </v-row>
           </v-col>
         </v-row>
       </v-card-text>
@@ -1565,6 +1706,53 @@ async function previewCompositeDraft(): Promise<void> {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.diff-panel {
+  max-height: 28rem;
+  overflow: auto;
+  padding: 0.5rem 0;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: stretch;
+  font-family: ui-monospace, 'SFMono-Regular', 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.diff-line + .diff-line {
+  border-top: 1px solid rgba(var(--v-border-color), 0.24);
+}
+
+.diff-line--add {
+  background: rgba(var(--v-theme-success), 0.12);
+}
+
+.diff-line--remove {
+  background: rgba(var(--v-theme-error), 0.12);
+}
+
+.diff-line__numbers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem;
+  padding: 0.35rem 0.5rem;
+  text-align: right;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  background: rgba(var(--v-theme-surface-variant), 0.55);
+  border-inline-end: 1px solid rgba(var(--v-border-color), 0.35);
+  user-select: none;
+}
+
+.diff-line__content {
+  margin: 0;
+  padding: 0.35rem 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 
 .yaml-context-panel {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
