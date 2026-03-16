@@ -119,3 +119,18 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
+
+[tool.uv.build-backend]
+source-exclude = [
+    "/src/clash_sub_manager/webui/node_modules",
+    "/src/clash_sub_manager/webui/.pnpm-store",
+]
+wheel-exclude = [
+    "/src/clash_sub_manager/webui/node_modules",
+    "/src/clash_sub_manager/webui/.pnpm-store",
+    "/src/clash_sub_manager/webui/src",
+    "/src/clash_sub_manager/webui/package.json",
+    "/src/clash_sub_manager/webui/pnpm-lock.yaml",
+    "/src/clash_sub_manager/webui/tsconfig.json",
+    "/src/clash_sub_manager/webui/vite.config.ts",
+]

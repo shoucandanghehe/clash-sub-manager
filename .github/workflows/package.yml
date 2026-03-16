@@ -1,0 +1,89 @@
+name: Package
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: src/clash_sub_manager/webui/pnpm-lock.yaml
+
+      - name: Install Python dependencies
+        run: uv sync --dev
+
+      - name: Install WebUI dependencies
+        run: pnpm --dir src/clash_sub_manager/webui install --frozen-lockfile
+
+      - name: Check backend types and tests
+        run: |
+          uv run basedpyright
+          uv run mypy src tests
+          uv run pytest tests/test_api.py tests/test_parsers_and_core.py -q
+
+      - name: Check WebUI
+        run: |
+          pnpm --dir src/clash_sub_manager/webui run typecheck
+          pnpm --dir src/clash_sub_manager/webui run build
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Verify wheel contains WebUI dist
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          wheels = sorted(Path('dist').glob('*.whl'))
+          if not wheels:
+              raise SystemExit('No wheel was built')
+
+          wheel = wheels[0]
+          with zipfile.ZipFile(wheel) as archive:
+              names = archive.namelist()
+
+          required = [
+              'clash_sub_manager/webui/dist/index.html',
+          ]
+          missing = [name for name in required if name not in names]
+          if missing:
+              raise SystemExit(f'Missing expected WebUI assets in wheel: {missing}')
+
+          if not any(name.startswith('clash_sub_manager/webui/dist/assets/') for name in names):
+              raise SystemExit('Wheel is missing WebUI dist/assets contents')
+
+          print(f'Validated WebUI assets in {wheel.name}')
+          PY
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-artifacts
+          path: dist/
