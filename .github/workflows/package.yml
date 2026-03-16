@@ -33,13 +33,13 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
-          cache-dependency-path: src/clash_sub_manager/webui/pnpm-lock.yaml
+          cache-dependency-path: webui/pnpm-lock.yaml
 
       - name: Install Python dependencies
         run: uv sync --dev
 
       - name: Install WebUI dependencies
-        run: pnpm --dir src/clash_sub_manager/webui install --frozen-lockfile
+        run: pnpm --dir webui install --frozen-lockfile
 
       - name: Check backend types and tests
         run: |
@@ -49,13 +49,19 @@ jobs:
 
       - name: Check WebUI
         run: |
-          pnpm --dir src/clash_sub_manager/webui run typecheck
-          pnpm --dir src/clash_sub_manager/webui run build
+          pnpm --dir webui run typecheck
+          pnpm --dir webui run build
+
+      - name: Sync WebUI static assets
+        run: |
+          mkdir -p src/clash_sub_manager/static/webui
+          rm -rf src/clash_sub_manager/static/webui/*
+          cp -a webui/dist/. src/clash_sub_manager/static/webui/
 
       - name: Build distributions
         run: uv build
 
-      - name: Verify wheel contains WebUI dist
+      - name: Verify wheel contains packaged WebUI
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -70,17 +76,18 @@ jobs:
               names = archive.namelist()
 
           required = [
-              'clash_sub_manager/webui/dist/index.html',
+              'clash_sub_manager/static/webui/index.html',
           ]
           missing = [name for name in required if name not in names]
           if missing:
               raise SystemExit(f'Missing expected WebUI assets in wheel: {missing}')
 
-          if not any(name.startswith('clash_sub_manager/webui/dist/assets/') for name in names):
-              raise SystemExit('Wheel is missing WebUI dist/assets contents')
+          if not any(name.startswith('clash_sub_manager/static/webui/assets/') for name in names):
+              raise SystemExit('Wheel is missing WebUI assets contents')
 
           print(f'Validated WebUI assets in {wheel.name}')
           PY
+
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4

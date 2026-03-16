@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..db import create_engine, init_db, normalize_async_db_url
 from .routes import api_router
 
-WEBUI_DIST = Path(__file__).resolve().parent.parent / 'webui' / 'dist'
+WEBUI_STATIC = Path(__file__).resolve().parent.parent / 'static' / 'webui'
 
 
 def _build_lifespan(db_url: str) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
@@ -37,8 +37,8 @@ def create_app(*, db_url: str | None = None) -> FastAPI:
     normalized_db_url = normalize_async_db_url(db_url or 'sqlite+aiosqlite:///./clash_sub_manager.db')
     app = FastAPI(title='Clash Sub Manager', version='0.1.0', lifespan=_build_lifespan(normalized_db_url))
     app.include_router(api_router)
-    if WEBUI_DIST.exists():
-        app.mount('/ui', StaticFiles(directory=WEBUI_DIST, html=True), name='webui')
+    if WEBUI_STATIC.exists():
+        app.mount('/ui', StaticFiles(directory=WEBUI_STATIC, html=True), name='webui')
     return app
 
 

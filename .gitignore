@@ -11,12 +11,14 @@ __pycache__/
 local/
 
 # Frontend local dependencies
-src/clash_sub_manager/webui/node_modules/
+webui/node_modules/
 
 # Local tool metadata
 AGENTS.md
 .worktrees/
 .python-version
-src/clash_sub_manager/webui/dist/
-src/clash_sub_manager/webui/src/*.js
-src/clash_sub_manager/webui/src/**/*.vue.js
+webui/dist/
+webui/src/*.js
+webui/src/**/*.vue.js
+src/clash_sub_manager/static/webui/*
+!src/clash_sub_manager/static/webui/.gitkeep
