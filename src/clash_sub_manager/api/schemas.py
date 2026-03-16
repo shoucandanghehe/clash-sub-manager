@@ -196,6 +196,10 @@ class RuleSourceUpdate(BaseModel):
         return _normalize_name(value, required=False)
 
 
+class YamlPreviewRead(BaseModel):
+    content: str
+
+
 class MergeProfileRead(BaseModel):
     id: int
     name: str
@@ -257,4 +261,5 @@ __all__ = [
     'TemplateRead',
     'TemplateSummaryRead',
     'TemplateUpdate',
+    'YamlPreviewRead',
 ]

@@ -23,9 +23,9 @@ def test_convert_endpoint_returns_clash_config(client: TestClient) -> None:
     )
 
     assert response.status_code == 200
-    body = response.json()
-    assert body['proxies'][0]['name'] == 'Demo'
-    assert body['proxy-groups'][0]['proxies'] == ['Demo', 'DIRECT']
+    rendered = yaml.safe_load(response.json()['content'])
+    assert rendered['proxies'][0]['name'] == 'Demo'
+    assert rendered['proxy-groups'][0]['proxies'] == ['Demo', 'DIRECT']
 
 
 def test_merge_endpoint_merges_multiple_sources(client: TestClient) -> None:
@@ -40,8 +40,10 @@ def test_merge_endpoint_merges_multiple_sources(client: TestClient) -> None:
     )
 
     assert response.status_code == 200
-    body = response.json()
-    assert [proxy['name'] for proxy in body['proxies']] == ['One', 'Two']
+    rendered = yaml.safe_load(response.json()['content'])
+    assert [proxy['name'] for proxy in rendered['proxies']] == ['One', 'Two']
+    assert rendered['proxy-groups'][0]['proxies'] == ['One', 'Two', 'DIRECT']
+
 
 
 def test_subscription_crud_endpoints(client: TestClient) -> None:
@@ -204,7 +206,7 @@ def test_merge_profile_crud_and_generate(client: TestClient) -> None:
 
     generate_response = client.post(f"/merge-profiles/{created['id']}/generate")
     assert generate_response.status_code == 200
-    generated = generate_response.json()
+    generated = yaml.safe_load(generate_response.json()['content'])
     assert [proxy['name'] for proxy in generated['proxies']] == ['Beta']
     assert generated['proxy-groups'][0]['name'] == 'Select'
     assert generated['rules'] == ['RULE-SET,applications,Select', 'MATCH,Select']

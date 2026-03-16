@@ -302,7 +302,7 @@ export const useManagerStore = defineStore('manager', () => {
   async function runConvertPreview(payload: ConvertPayload): Promise<boolean> {
     return run('已生成转换预览。', async () => {
       const result = await api.convertPreview(payload)
-      convertPreview.value = formatDocument(result)
+      convertPreview.value = result.content
     })
   }
 
@@ -327,14 +327,14 @@ export const useManagerStore = defineStore('manager', () => {
         template,
       }
       const result = await api.mergePreview(payload)
-      mergePreview.value = formatDocument(result)
+      mergePreview.value = result.content
     })
   }
 
   async function runMergeProfilePreview(id: number): Promise<boolean> {
     return run('已生成合并配置预览。', async () => {
       const result = await api.generateMergeProfile(id)
-      mergeProfilePreview.value = formatDocument(result)
+      mergeProfilePreview.value = result.content
       mergeProfilePreviewName.value = mergeProfiles.value.find((profile) => profile.id === id)?.name ?? '合并配置'
     })
   }

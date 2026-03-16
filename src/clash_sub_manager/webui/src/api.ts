@@ -146,7 +146,7 @@ export interface CompositePreviewPayload {
   patch_sequence: number[]
 }
 
-export interface CompositePreviewResponse {
+export interface YamlPreviewResponse {
   content: string
 }
 
@@ -210,7 +210,7 @@ export const api = {
     request<TemplatePatchRecord>(`/template-patches/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteTemplatePatch: (id: number) => request<void>(`/template-patches/${id}`, { method: 'DELETE' }),
   previewTemplatePatch: (id: number, baseTemplateId: number) =>
-    request<CompositePreviewResponse>(`/template-patches/${id}/preview`, {
+    request<YamlPreviewResponse>(`/template-patches/${id}/preview`, {
       method: 'POST',
       body: JSON.stringify({ base_template_id: baseTemplateId }),
     }),
@@ -221,7 +221,7 @@ export const api = {
     request<CompositeTemplateRecord>(`/composite-templates/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteCompositeTemplate: (id: number) => request<void>(`/composite-templates/${id}`, { method: 'DELETE' }),
   previewCompositeTemplate: (payload: CompositePreviewPayload) =>
-    request<CompositePreviewResponse>('/composite-templates/preview', { method: 'POST', body: JSON.stringify(payload) }),
+    request<YamlPreviewResponse>('/composite-templates/preview', { method: 'POST', body: JSON.stringify(payload) }),
   listRuleSources: () => request<RuleSourceRecord[]>('/rule-sources'),
   createRuleSource: (payload: RuleSourcePayload) =>
     request<RuleSourceRecord>('/rule-sources', { method: 'POST', body: JSON.stringify(payload) }),
@@ -235,9 +235,9 @@ export const api = {
   updateMergeProfile: (id: number, payload: Partial<MergeProfilePayload>) =>
     request<MergeProfileRecord>(`/merge-profiles/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteMergeProfile: (id: number) => request<void>(`/merge-profiles/${id}`, { method: 'DELETE' }),
-  generateMergeProfile: (id: number) => request<Record<string, unknown>>(`/merge-profiles/${id}/generate`, { method: 'POST' }),
+  generateMergeProfile: (id: number) => request<YamlPreviewResponse>(`/merge-profiles/${id}/generate`, { method: 'POST' }),
   convertPreview: (payload: ConvertPayload) =>
-    request<Record<string, unknown>>('/convert', { method: 'POST', body: JSON.stringify(payload) }),
+    request<YamlPreviewResponse>('/convert', { method: 'POST', body: JSON.stringify(payload) }),
   mergePreview: (payload: MergePayload) =>
-    request<Record<string, unknown>>('/merge', { method: 'POST', body: JSON.stringify(payload) }),
+    request<YamlPreviewResponse>('/merge', { method: 'POST', body: JSON.stringify(payload) }),
 }

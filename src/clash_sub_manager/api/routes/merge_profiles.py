@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ...core.composer import TemplateComposer
 from ...core.merger import SubscriptionMerger
 from ...core.template import TemplateProcessor
 from ...db.models import MergeProfile, Subscription, Template
@@ -21,7 +22,8 @@ from ..schemas import (
     MergeProfileUpdate,
     SubscriptionSummaryRead,
     TemplateSummaryRead,
-)
+    YamlPreviewRead,
+ )
 from ._db import commit_or_name_conflict
 from ._rule_providers import build_cached_rule_provider_urls
 
@@ -173,7 +175,7 @@ async def get_merge_profile_config(profile_name: str, request: Request, db: DbSe
     if merge_profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='merge profile not found')
     document = await _build_merge_profile_document(merge_profile, request, db)
-    content = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+    content = TemplateComposer.render_document(document)
     return Response(content=content, media_type='application/yaml')
 
 
@@ -185,7 +187,8 @@ async def delete_merge_profile(profile_id: int, db: DbSession) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post('/merge-profiles/{profile_id}/generate')
-async def generate_merge_profile(profile_id: int, request: Request, db: DbSession) -> dict[str, object]:
+@router.post('/merge-profiles/{profile_id}/generate', response_model=YamlPreviewRead)
+async def generate_merge_profile(profile_id: int, request: Request, db: DbSession) -> YamlPreviewRead:
     merge_profile = await _get_merge_profile_or_404(profile_id, db)
-    return await _build_merge_profile_document(merge_profile, request, db)
+    document = await _build_merge_profile_document(merge_profile, request, db)
+    return YamlPreviewRead(content=TemplateComposer.render_document(document))
