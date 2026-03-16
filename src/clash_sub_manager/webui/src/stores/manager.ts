@@ -1,4 +1,4 @@
-import { dump as dumpYaml, load as loadYaml } from 'js-yaml'
+import { load as loadYaml } from 'js-yaml'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
@@ -22,13 +22,6 @@ import {
 
 function toMessage(caught: unknown): string {
   return caught instanceof Error ? caught.message : '发生未知错误'
-}
-
-function formatDocument(document: Record<string, unknown>): string {
-  return dumpYaml(document, {
-    lineWidth: -1,
-    noRefs: true,
-  })
 }
 
 function parseTemplateContent(content: string): Record<string, unknown> {

@@ -320,24 +320,6 @@ def test_template_composer_applies_patch_sequence_in_order() -> None:
     assert rendered['rules'] == ['MATCH,Auto', 'DOMAIN,example.com,Select']
 
 
-def test_template_composer_refreshes_composite_cache() -> None:
-    composer = TemplateComposer()
-    base_template = Template(name='base', content='proxies: []\n', is_default=False)
-    composite = CompositeTemplate(
-        name='derived',
-        base_template=base_template,
-        patch_sequence=[1],
-        cached_content='',
-    )
-    patches = [
-        TemplatePatch(name='append-proxy', operations=[{'op': 'list_append', 'path': 'proxies', 'value': {'name': 'Node-A'}}]),
-    ]
-
-    rendered = composer.refresh_composite(composite, patches)
-
-    assert rendered == {'proxies': [{'name': 'Node-A'}]}
-    assert yaml.safe_load(composite.cached_content) == rendered
-
 
 def test_patch_engine_list_remove_uses_index_and_optional_old_value() -> None:
     engine = PatchEngine()

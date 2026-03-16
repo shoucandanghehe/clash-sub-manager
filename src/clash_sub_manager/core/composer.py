@@ -33,11 +33,6 @@ class TemplateComposer:
         document = self.compose(base_template, patches)
         return self.render_document(document)
 
-    def refresh_composite(self, composite_template: CompositeTemplate, patches: list[TemplatePatch]) -> dict[str, object]:
-        document = self.compose(composite_template.base_template, patches)
-        composite_template.cached_content = self.render_document(document)
-        return document
-
     @staticmethod
     def _load_template_document(base_template: dict[str, object] | Template) -> dict[str, object]:
         if isinstance(base_template, dict):
