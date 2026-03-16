@@ -16,7 +16,6 @@ webui/node_modules/
 # Local tool metadata
 AGENTS.md
 .worktrees/
-.python-version
 webui/dist/
 webui/src/*.js
 webui/src/**/*.vue.js
