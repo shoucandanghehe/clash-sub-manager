@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from platformdirs import user_data_path
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -11,6 +13,22 @@ from .base import Base
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+
+APP_DATA_DIR_NAME = 'clash-sub-manager'
+DEFAULT_DB_FILENAME = 'clash_sub_manager.db'
+
+
+def default_db_path() -> Path:
+    """Return the user-specific application data path for the SQLite database."""
+
+    return user_data_path(appname=APP_DATA_DIR_NAME, appauthor=False, ensure_exists=True) / DEFAULT_DB_FILENAME
+
+
+def default_db_url() -> str:
+    """Return the default SQLite URL stored under the user application data directory."""
+
+    return f'sqlite+aiosqlite:///{default_db_path()}'
 
 
 def normalize_async_db_url(db_url: str) -> str:
@@ -44,9 +62,20 @@ async def init_db(engine: AsyncEngine) -> None:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_ensure_merge_profile_columns)
 
+
 async def get_session(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:
     async with session_factory() as session:
         yield session
 
 
-__all__ = ['create_engine', 'create_session_factory', 'get_session', 'init_db', 'normalize_async_db_url']
+__all__ = [
+    'APP_DATA_DIR_NAME',
+    'DEFAULT_DB_FILENAME',
+    'create_engine',
+    'create_session_factory',
+    'default_db_path',
+    'default_db_url',
+    'get_session',
+    'init_db',
+    'normalize_async_db_url',
+]

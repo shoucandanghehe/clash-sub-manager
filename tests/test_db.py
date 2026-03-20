@@ -6,21 +6,42 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+import clash_sub_manager.db.session as db_session
 from clash_sub_manager.db import (
+    APP_DATA_DIR_NAME,
+    DEFAULT_DB_FILENAME,
     CompositeTemplate,
     RuleSource,
     Subscription,
     Template,
     TemplatePatch,
     create_engine,
+    default_db_path,
+    default_db_url,
     init_db,
     normalize_async_db_url,
-    )
+)
 
 
 def test_normalize_async_db_url_for_sqlite() -> None:
     assert normalize_async_db_url('sqlite:///./demo.db') == 'sqlite+aiosqlite:///./demo.db'
     assert normalize_async_db_url('sqlite+aiosqlite:///./demo.db') == 'sqlite+aiosqlite:///./demo.db'
+
+
+def test_default_db_uses_user_app_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    app_data_root = pathlib.Path(tmp_path) / 'app-data'
+
+    def fake_user_data_path(*, appname: str, appauthor: bool, ensure_exists: bool) -> pathlib.Path:
+        assert appname == APP_DATA_DIR_NAME
+        assert appauthor is False
+        assert ensure_exists is True
+        app_data_root.mkdir(parents=True, exist_ok=True)
+        return app_data_root
+
+    monkeypatch.setattr(db_session, 'user_data_path', fake_user_data_path)
+
+    assert default_db_path() == app_data_root / DEFAULT_DB_FILENAME
+    assert default_db_url() == f'sqlite+aiosqlite:///{app_data_root / DEFAULT_DB_FILENAME}'
 
 
 @pytest.mark.asyncio
@@ -47,7 +68,9 @@ async def test_init_db_creates_tables_and_supports_crud(tmp_path: pathlib.Path) 
                 enabled=True,
                 template_id=template.id,
             )
-            rule_source = RuleSource(name='rules', url='https://example.com/rules', auto_update=True, content='MATCH,DIRECT')
+            rule_source = RuleSource(
+                name='rules', url='https://example.com/rules', auto_update=True, content='MATCH,DIRECT'
+            )
             template_patch = TemplatePatch(
                 name='add-node',
                 operations=[{'op': 'list_append', 'path': 'proxies', 'value': {'name': 'Node-A'}}],
@@ -68,7 +91,9 @@ async def test_init_db_creates_tables_and_supports_crud(tmp_path: pathlib.Path) 
             stored_rule_source = rule_result.scalar_one()
             patch_result = await session.execute(select(TemplatePatch).where(TemplatePatch.name == 'add-node'))
             stored_patch = patch_result.scalar_one()
-            composite_result = await session.execute(select(CompositeTemplate).where(CompositeTemplate.name == 'derived'))
+            composite_result = await session.execute(
+                select(CompositeTemplate).where(CompositeTemplate.name == 'derived')
+            )
             stored_composite = composite_result.scalar_one()
 
             assert stored_subscription.headers == {'User-Agent': 'test'}

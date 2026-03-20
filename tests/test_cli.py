@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     import pytest
 
 
-
 def test_cli_help_lists_service_options() -> None:
     result = subprocess.run(
         [sys.executable, '-m', 'clash_sub_manager', '--help'],
@@ -40,13 +39,14 @@ def test_cli_main_starts_service_with_defaults(monkeypatch: pytest.MonkeyPatch) 
         captured['port'] = port
 
     monkeypatch.setattr(cli, 'create_app', fake_create_app)
+    monkeypatch.setattr(cli, 'default_db_url', lambda: 'sqlite+aiosqlite:////tmp/app-data/clash_sub_manager.db')
     monkeypatch.setattr(cli.uvicorn, 'run', fake_run)
 
     cli.main([])
 
     assert captured == {
         'app': 'app',
-        'db_url': 'sqlite+aiosqlite:///./clash_sub_manager.db',
+        'db_url': 'sqlite+aiosqlite:////tmp/app-data/clash_sub_manager.db',
         'host': '127.0.0.1',
         'port': 8000,
     }

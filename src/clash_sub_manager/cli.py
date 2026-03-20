@@ -6,6 +6,7 @@ import uvicorn
 from cyclopts import App
 
 from .api.server import create_app
+from .db import default_db_url
 
 app = App(
     help='Start the Clash Sub Manager HTTP API and WebUI service.',
@@ -17,7 +18,7 @@ app = App(
 def serve(
     host: str = '127.0.0.1',
     port: int = 8000,
-    db_url: str = 'sqlite+aiosqlite:///./clash_sub_manager.db',
+    db_url: str | None = None,
 ) -> None:
     """Start the Clash Sub Manager HTTP API and WebUI service.
 
@@ -28,10 +29,10 @@ def serve(
     port:
         Bind port for the HTTP service.
     db_url:
-        Database URL passed into the FastAPI application factory.
+        Database URL passed into the FastAPI application factory. Defaults to the user app data directory when omitted.
     """
 
-    uvicorn.run(create_app(db_url=db_url), host=host, port=port)
+    uvicorn.run(create_app(db_url=db_url or default_db_url()), host=host, port=port)
 
 
 def main(argv: list[str] | None = None) -> None:
