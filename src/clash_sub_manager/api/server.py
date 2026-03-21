@@ -13,6 +13,16 @@ from ..db import create_engine, default_db_url, init_db, normalize_async_db_url
 from .routes import api_router
 
 WEBUI_STATIC = Path(__file__).resolve().parent.parent / 'static' / 'webui'
+WEBUI_DEV_DIST = Path(__file__).resolve().parents[3] / 'webui' / 'dist'
+
+
+def _resolve_webui_dir() -> Path | None:
+    """Prefer packaged assets, but fall back to a local frontend build during development."""
+
+    for candidate in (WEBUI_STATIC, WEBUI_DEV_DIST):
+        if (candidate / 'index.html').is_file():
+            return candidate
+    return None
 
 
 def _build_lifespan(db_url: str) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
@@ -38,8 +48,9 @@ def create_app(*, db_url: str | None = None) -> FastAPI:
     normalized_db_url = normalize_async_db_url(db_url or default_db_url())
     app = FastAPI(title='Clash Sub Manager', version=__version__, lifespan=_build_lifespan(normalized_db_url))
     app.include_router(api_router)
-    if WEBUI_STATIC.exists():
-        app.mount('/ui', StaticFiles(directory=WEBUI_STATIC, html=True), name='webui')
+    webui_dir = _resolve_webui_dir()
+    if webui_dir is not None:
+        app.mount('/ui', StaticFiles(directory=webui_dir, html=True), name='webui')
     return app
 
 
