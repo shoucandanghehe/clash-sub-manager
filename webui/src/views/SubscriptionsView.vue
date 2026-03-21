@@ -222,6 +222,9 @@ async function saveSubscription(): Promise<void> {
       <v-card-text>
         <v-row>
           <v-col cols="12">
+            <v-text-field v-model="form.name" label="名称" maxlength="255" />
+          </v-col>
+          <v-col cols="12">
             <v-btn-toggle v-model="sourceMode" color="primary" mandatory>
               <v-btn value="content">内联内容</v-btn>
               <v-btn value="url">远程 URL</v-btn>
