@@ -25,15 +25,6 @@ router = APIRouter(tags=['config'])
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 
-async def _ensure_template_exists(db: AsyncSession, template_id: int | None) -> None:
-    if template_id is None:
-        return
-
-    template = await db.get(Template, template_id)
-    if template is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='template not found')
-
-
 @router.get('/subscriptions', response_model=list[SubscriptionRead])
 async def list_subscriptions(db: DbSession) -> list[Subscription]:
     return list((await db.scalars(select(Subscription).order_by(Subscription.id))).all())
@@ -41,7 +32,6 @@ async def list_subscriptions(db: DbSession) -> list[Subscription]:
 
 @router.post('/subscriptions', response_model=SubscriptionRead, status_code=status.HTTP_201_CREATED)
 async def create_subscription(payload: SubscriptionCreate, db: DbSession) -> Subscription:
-    await _ensure_template_exists(db, payload.template_id)
     subscription = Subscription(
         name=payload.name,
         url=str(payload.url) if payload.url is not None else None,
@@ -50,7 +40,6 @@ async def create_subscription(payload: SubscriptionCreate, db: DbSession) -> Sub
         headers=payload.headers,
         follow_redirects=payload.follow_redirects,
         enabled=payload.enabled,
-        template_id=payload.template_id,
     )
     db.add(subscription)
     await commit_or_name_conflict(db, resource_name='subscription', table_name='subscriptions')
@@ -80,7 +69,6 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
         'headers': subscription.headers,
         'follow_redirects': subscription.follow_redirects,
         'enabled': subscription.enabled,
-        'template_id': subscription.template_id,
     }
     updated = payload.model_dump(exclude_unset=True)
     merged = current | updated
@@ -95,8 +83,6 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
             'enabled': merged['enabled'],
         }
     )
-    await _ensure_template_exists(db, merged['template_id'])
-
     for field, value in merged.items():
         if field == 'url' and value is not None:
             setattr(subscription, field, str(value))

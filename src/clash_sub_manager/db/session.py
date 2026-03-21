@@ -57,10 +57,49 @@ def _ensure_merge_profile_columns(sync_connection) -> None:
         sync_connection.exec_driver_sql('ALTER TABLE merge_profiles ADD COLUMN composite_template_id INTEGER')
 
 
+def _drop_subscription_template_column(sync_connection) -> None:
+    inspector = inspect(sync_connection)
+    columns = {column['name'] for column in inspector.get_columns('subscriptions')}
+    if 'template_id' not in columns:
+        return
+
+    sync_connection.exec_driver_sql('PRAGMA foreign_keys=OFF')
+    try:
+        sync_connection.exec_driver_sql(
+            """
+            CREATE TABLE subscriptions__new (
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(255) UNIQUE NOT NULL,
+                url VARCHAR(2048),
+                content TEXT,
+                proxy VARCHAR(2048),
+                headers JSON NOT NULL,
+                follow_redirects BOOLEAN NOT NULL,
+                enabled BOOLEAN NOT NULL
+            )
+            """
+        )
+        sync_connection.exec_driver_sql(
+            """
+            INSERT INTO subscriptions__new (
+                id, name, url, content, proxy, headers, follow_redirects, enabled
+            )
+            SELECT
+                id, name, url, content, proxy, headers, follow_redirects, enabled
+            FROM subscriptions
+            """
+        )
+        sync_connection.exec_driver_sql('DROP TABLE subscriptions')
+        sync_connection.exec_driver_sql('ALTER TABLE subscriptions__new RENAME TO subscriptions')
+    finally:
+        sync_connection.exec_driver_sql('PRAGMA foreign_keys=ON')
+
+
 async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_ensure_merge_profile_columns)
+        await connection.run_sync(_drop_subscription_template_column)
 
 
 async def get_session(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:

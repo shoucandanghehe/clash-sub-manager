@@ -19,12 +19,11 @@ interface SubscriptionForm {
   proxy: string
   followRedirects: boolean
   enabled: boolean
-  templateId: number | null
   headers: HeaderRow[]
 }
 
 const store = useManagerStore()
-const { busy, subscriptions, templates } = storeToRefs(store)
+const { busy, subscriptions } = storeToRefs(store)
 
 const dialog = ref(false)
 const editingId = ref<number | null>(null)
@@ -37,14 +36,12 @@ const form = reactive<SubscriptionForm>({
   proxy: '',
   followRedirects: true,
   enabled: true,
-  templateId: null,
   headers: [],
 })
 
 const headers = [
   { title: '名称', key: 'name' },
   { title: '来源', key: 'source' },
-  { title: '模板', key: 'template' },
   { title: '状态', key: 'status', sortable: false },
   { title: '操作', key: 'actions', sortable: false, align: 'end' },
 ] as const
@@ -117,7 +114,6 @@ function resetForm(): void {
   form.proxy = ''
   form.followRedirects = true
   form.enabled = true
-  form.templateId = null
   form.headers = []
 }
 
@@ -127,10 +123,6 @@ function addHeaderRow(): void {
 
 function removeHeaderRow(id: number): void {
   form.headers = form.headers.filter((row) => row.id !== id)
-}
-
-function templateNameFor(subscription: SubscriptionRecord): string {
-  return templates.value.find((template) => template.id === subscription.template_id)?.name ?? '未指定'
 }
 
 function openCreateDialog(): void {
@@ -146,7 +138,6 @@ function openEditDialog(subscription: SubscriptionRecord): void {
   form.proxy = subscription.proxy ?? ''
   form.followRedirects = subscription.follow_redirects
   form.enabled = subscription.enabled
-  form.templateId = subscription.template_id
   form.headers = Object.entries(subscription.headers).map(([name, value]) => createHeaderRow(name, value))
   dialog.value = true
 }
@@ -158,7 +149,6 @@ async function saveSubscription(): Promise<void> {
     headers: normalizedHeaders.value.values,
     follow_redirects: form.followRedirects,
     enabled: form.enabled,
-    template_id: form.templateId,
   }
 
   if (sourceMode.value === 'content') {
@@ -198,10 +188,6 @@ async function saveSubscription(): Promise<void> {
         </div>
       </template>
 
-      <template #item.template="{ item }">
-        <v-chip size="small" variant="tonal">{{ templateNameFor(item) }}</v-chip>
-      </template>
-
       <template #item.status="{ item }">
         <div class="d-flex align-center ga-3 py-2">
           <v-switch
@@ -235,19 +221,6 @@ async function saveSubscription(): Promise<void> {
 
       <v-card-text>
         <v-row>
-          <v-col cols="12" md="6">
-            <v-text-field v-model="form.name" label="名称" maxlength="255" />
-          </v-col>
-          <v-col cols="12" md="6">
-            <v-select
-              v-model="form.templateId"
-              :items="templates"
-              item-title="name"
-              item-value="id"
-              label="关联模板"
-              clearable
-            />
-          </v-col>
           <v-col cols="12">
             <v-btn-toggle v-model="sourceMode" color="primary" mandatory>
               <v-btn value="content">内联内容</v-btn>

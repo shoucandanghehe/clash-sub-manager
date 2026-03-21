@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import pathlib
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import clash_sub_manager.db.session as db_session
@@ -66,7 +67,6 @@ async def test_init_db_creates_tables_and_supports_crud(tmp_path: pathlib.Path) 
                 headers={'User-Agent': 'test'},
                 follow_redirects=True,
                 enabled=True,
-                template_id=template.id,
             )
             rule_source = RuleSource(
                 name='rules', url='https://example.com/rules', auto_update=True, content='MATCH,DIRECT'
@@ -97,10 +97,61 @@ async def test_init_db_creates_tables_and_supports_crud(tmp_path: pathlib.Path) 
             stored_composite = composite_result.scalar_one()
 
             assert stored_subscription.headers == {'User-Agent': 'test'}
-            assert stored_subscription.template_id == 1
             assert stored_rule_source.content == 'MATCH,DIRECT'
             assert stored_patch.operations == [{'op': 'list_append', 'path': 'proxies', 'value': {'name': 'Node-A'}}]
             assert stored_composite.patch_sequence == [1]
             assert stored_composite.base_template_id == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_init_db_rebuilds_legacy_subscriptions_table(tmp_path: pathlib.Path) -> None:
+    db_path = pathlib.Path(tmp_path) / 'legacy.db'
+    engine = create_engine(f'sqlite:///{db_path}')
+
+    try:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql(
+                """
+                CREATE TABLE subscriptions (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(255) UNIQUE NOT NULL,
+                    url VARCHAR(2048),
+                    content TEXT,
+                    proxy VARCHAR(2048),
+                    headers JSON NOT NULL,
+                    follow_redirects BOOLEAN NOT NULL,
+                    enabled BOOLEAN NOT NULL,
+                    template_id INTEGER
+                )
+                """
+            )
+            await connection.exec_driver_sql(
+                """
+                INSERT INTO subscriptions (
+                    id, name, url, content, proxy, headers, follow_redirects, enabled, template_id
+                )
+                VALUES (
+                    1, 'legacy', 'https://example.com/sub', NULL, NULL, '{"User-Agent":"legacy"}', 1, 1, 99
+                )
+                """
+            )
+
+        await init_db(engine)
+
+        async with engine.begin() as connection:
+
+            def read_subscription_columns(sync_connection) -> tuple[list[str], tuple[str, str]]:
+                inspector = inspect(sync_connection)
+                columns = [column['name'] for column in inspector.get_columns('subscriptions')]
+                row = sync_connection.exec_driver_sql('SELECT name, headers FROM subscriptions WHERE id = 1').one()
+                return columns, (str(row[0]), str(row[1]))
+
+            columns, stored_subscription = await connection.run_sync(read_subscription_columns)
+
+        assert 'template_id' not in columns
+        assert stored_subscription[0] == 'legacy'
+        assert json.loads(stored_subscription[1]) == {'User-Agent': 'legacy'}
     finally:
         await engine.dispose()

@@ -7,7 +7,6 @@ export interface SubscriptionRecord {
   headers: Record<string, string>
   follow_redirects: boolean
   enabled: boolean
-  template_id: number | null
 }
 
 export interface TemplateRecord {
@@ -93,7 +92,6 @@ export interface SubscriptionPayload {
   headers?: Record<string, string>
   follow_redirects?: boolean
   enabled?: boolean
-  template_id?: number | null
 }
 
 export interface TemplatePayload {

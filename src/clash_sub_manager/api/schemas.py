@@ -105,13 +105,11 @@ class SubscriptionRead(ORMReadModel):
     headers: dict[str, str]
     follow_redirects: bool
     enabled: bool
-    template_id: int | None
 
 
 class SubscriptionCreate(SubscriptionSourceInput):
     name: str = Field(min_length=1)
     enabled: bool = True
-    template_id: int | None = None
 
     @field_validator('name')
     @classmethod
@@ -127,7 +125,6 @@ class SubscriptionUpdate(BaseModel):
     headers: dict[str, str] | None = None
     follow_redirects: bool | None = None
     enabled: bool | None = None
-    template_id: int | None = None
 
     @field_validator('name')
     @classmethod

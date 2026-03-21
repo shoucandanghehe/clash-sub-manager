@@ -24,7 +24,6 @@ class Template(Base):
     content: Mapped[str] = mapped_column(Text())
     is_default: Mapped[bool] = mapped_column(Boolean(), default=False)
 
-    subscriptions: Mapped[list[Subscription]] = relationship(back_populates='template')
     merge_profiles: Mapped[list[MergeProfile]] = relationship(back_populates='template')
     composite_templates: Mapped[list[CompositeTemplate]] = relationship(back_populates='base_template')
 
@@ -40,9 +39,7 @@ class Subscription(Base):
     headers: Mapped[dict[str, str]] = mapped_column(JSON(), default=dict)
     follow_redirects: Mapped[bool] = mapped_column(Boolean(), default=True)
     enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
-    template_id: Mapped[int | None] = mapped_column(ForeignKey('templates.id'), nullable=True)
 
-    template: Mapped[Template | None] = relationship(back_populates='subscriptions')
     merge_profiles: Mapped[list[MergeProfile]] = relationship(
         secondary=merge_profile_subscriptions,
         back_populates='subscriptions',
