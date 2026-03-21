@@ -150,17 +150,41 @@ function buildProfileConfigUrl(profileName: string): string {
   return new URL(`/merge-profiles/by-name/${encodedName}/config`, window.location.origin).toString()
 }
 
+function copyToClipboardFallback(text: string): boolean {
+  const textArea = document.createElement('textarea')
+  textArea.value = text
+  textArea.style.position = 'fixed'
+  textArea.style.left = '-999999px'
+  textArea.style.top = '-999999px'
+  document.body.appendChild(textArea)
+  textArea.focus()
+  textArea.select()
+  try {
+    const successful = document.execCommand('copy')
+    document.body.removeChild(textArea)
+    return successful
+  } catch {
+    document.body.removeChild(textArea)
+    return false
+  }
+}
+
 async function copyProfileLink(profile: MergeProfileRecord): Promise<void> {
   const link = buildProfileConfigUrl(profile.name)
-  if (!navigator.clipboard) {
-    store.showError('当前浏览器不支持复制链接。')
-    return
+
+  if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(link)
+      store.showNotice(`已复制 ${profile.name} 链接。`)
+      return
+    } catch {
+      // Clipboard API 失败，尝试 fallback
+    }
   }
 
-  try {
-    await navigator.clipboard.writeText(link)
+  if (copyToClipboardFallback(link)) {
     store.showNotice(`已复制 ${profile.name} 链接。`)
-  } catch {
+  } else {
     store.showError('复制链接失败，请检查浏览器权限。')
   }
 }
