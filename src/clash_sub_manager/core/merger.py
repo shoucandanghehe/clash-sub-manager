@@ -6,7 +6,6 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from ..models.clash import ClashConfig
-from ..models.proxy import ProxyNodeModel, ShadowsocksNode, ShadowsocksRNode, TrojanNode, VMessNode
 from ..parsers import ProxyParser
 from .converter import ClashConverter
 from .fetcher import SubscriptionFetcher
@@ -14,8 +13,11 @@ from .fetcher import SubscriptionFetcher
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from ..models.proxy import ProxyNodeModel
     from ..models.subscription import SubscriptionConfig
     from .template import TemplateProcessor
+
+
 
 
 class SubscriptionMerger:
@@ -29,7 +31,6 @@ class SubscriptionMerger:
         if not enabled_configs:
             msg = 'at least one enabled subscription is required'
             raise ValueError(msg)
-
         contents = await asyncio.gather(*(SubscriptionFetcher(config).fetch() for config in enabled_configs))
         parsed_groups = [ProxyParser.parse_subscription(content) for content in contents]
         deduped_nodes = self._deduplicate(node for group in parsed_groups for node in group)
@@ -54,49 +55,17 @@ class SubscriptionMerger:
         return list(unique.values())
 
     def _node_identity(self, node: ProxyNodeModel) -> tuple[object, ...]:
-        base = (node.type, node.server, node.port)
-        if isinstance(node, ShadowsocksNode):
-            return (
-                *base,
-                node.cipher,
-                node.password,
-                node.plugin,
-                frozenset((node.plugin_opts or {}).items()),
+        return self._freeze_identity_value(node.model_dump())
+
+    def _freeze_identity_value(self, value: object) -> tuple[object, ...]:
+        if isinstance(value, dict):
+            return tuple(
+                (str(key), self._freeze_identity_value(entry))
+                for key, entry in sorted(value.items(), key=lambda item: str(item[0]))
             )
-        if isinstance(node, ShadowsocksRNode):
-            return (
-                *base,
-                node.cipher,
-                node.password,
-                node.protocol,
-                node.protocol_param,
-                node.obfs,
-                node.obfs_param,
-            )
-        if isinstance(node, VMessNode):
-            return (
-                *base,
-                node.uuid,
-                node.alter_id,
-                node.cipher,
-                node.network,
-                node.ws_path,
-                frozenset(node.ws_headers.items()),
-                node.grpc_service_name,
-                node.tls,
-            )
-        if isinstance(node, TrojanNode):
-            return (
-                *base,
-                node.password,
-                node.network,
-                node.ws_path,
-                frozenset(node.ws_headers.items()),
-                node.grpc_service_name,
-                node.sni,
-            )
-        msg = f'unsupported proxy node: {type(node)!r}'
-        raise TypeError(msg)
+        if isinstance(value, list):
+            return tuple(self._freeze_identity_value(entry) for entry in value)
+        return ('value', value)
 
 
 __all__ = ['SubscriptionMerger']

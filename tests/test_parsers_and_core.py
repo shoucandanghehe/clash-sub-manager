@@ -5,7 +5,6 @@ import json
 from typing import cast
 
 import pytest
-import yaml
 
 from clash_sub_manager.core import (
     ClashConverter,
@@ -17,7 +16,7 @@ from clash_sub_manager.core import (
     TemplateComposer,
     TemplateProcessor,
 )
-from clash_sub_manager.db import CompositeTemplate, Template, TemplatePatch
+from clash_sub_manager.db import Template, TemplatePatch
 from clash_sub_manager.models import SubscriptionConfig
 from clash_sub_manager.parsers import ClashParser, ProxyParser
 
@@ -40,7 +39,7 @@ def test_parse_shadowsocks_sip002_link() -> None:
 def test_parse_shadowsocksr_link() -> None:
     payload = (
         'example.com:8388:auth_sha1_v4:aes-256-cfb:tls1.2_ticket_auth:'
-        f"{_b64('secret')}/?remarks={_b64('SSR Demo')}&obfsparam={_b64('cdn.example.com')}"
+        f'{_b64("secret")}/?remarks={_b64("SSR Demo")}&obfsparam={_b64("cdn.example.com")}'
     )
     node = ProxyParser.parse_ssr(f'ssr://{_b64(payload)}')
 
@@ -222,6 +221,31 @@ async def test_subscription_merger_deduplicates_nodes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscription_merger_preserves_same_endpoint_with_distinct_names() -> None:
+    clash_text = """
+proxies:
+  - name: "Alpha Label"
+    type: ss
+    server: same.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: secret
+  - name: "Beta Label"
+    type: ss
+    server: same.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: secret
+"""
+    merged = await SubscriptionMerger([SubscriptionConfig(name='one', content=clash_text)]).merge()
+    merged_proxies = cast('list[dict[str, object]]', merged['proxies'])
+    merged_groups = cast('list[dict[str, object]]', merged['proxy-groups'])
+
+    assert [proxy['name'] for proxy in merged_proxies] == ['Alpha Label', 'Beta Label']
+    assert merged_groups[0]['proxies'] == ['Alpha Label', 'Beta Label', 'DIRECT']
+
+
+@pytest.mark.asyncio
 async def test_subscription_merger_fails_strictly_on_fetch_error(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_fetch(self: SubscriptionFetcher) -> str:
         if self.config.name == 'broken':
@@ -258,7 +282,7 @@ def test_patch_engine_applies_ordered_operations_without_mutating_input() -> Non
     ]
 
     rendered = engine.apply(template, operations)
-    rendered_proxy_groups = cast(list[dict[str, object]], rendered['proxy-groups'])
+    rendered_proxy_groups = cast('list[dict[str, object]]', rendered['proxy-groups'])
 
     assert rendered == {
         'proxy-groups': [
@@ -295,14 +319,7 @@ def test_template_composer_applies_patch_sequence_in_order() -> None:
     composer = TemplateComposer()
     base_template = Template(
         name='base',
-        content=(
-            'proxy-groups:\n'
-            '  - name: Auto\n'
-            '    proxies:\n'
-            '      - DIRECT\n'
-            'rules:\n'
-            '  - MATCH,Auto\n'
-        ),
+        content=('proxy-groups:\n  - name: Auto\n    proxies:\n      - DIRECT\nrules:\n  - MATCH,Auto\n'),
         is_default=False,
     )
     patches = [
@@ -322,7 +339,6 @@ def test_template_composer_applies_patch_sequence_in_order() -> None:
     assert rendered['rules'] == ['MATCH,Auto', 'DOMAIN,example.com,Select']
 
 
-
 def test_patch_engine_list_remove_uses_index_and_optional_old_value() -> None:
     engine = PatchEngine()
     template = {'proxy-groups': [{'name': 'Auto', 'proxies': ['DIRECT', 'Node-A', 'Node-B']}]}
@@ -333,8 +349,8 @@ def test_patch_engine_list_remove_uses_index_and_optional_old_value() -> None:
             {'op': 'list_remove', 'path': 'proxy-groups.0.proxies', 'index': 1, 'old_value': 'Node-A'},
         ],
     )
-    rendered_proxy_groups = cast(list[dict[str, object]], rendered['proxy-groups'])
-    template_proxy_groups = cast(list[dict[str, object]], template['proxy-groups'])
+    rendered_proxy_groups = cast('list[dict[str, object]]', rendered['proxy-groups'])
+    template_proxy_groups = cast('list[dict[str, object]]', template['proxy-groups'])
 
     assert rendered_proxy_groups[0]['proxies'] == ['DIRECT', 'Node-B']
     assert template_proxy_groups[0]['proxies'] == ['DIRECT', 'Node-A', 'Node-B']
