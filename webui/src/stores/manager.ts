@@ -1,6 +1,6 @@
 import { load as loadYaml } from 'js-yaml'
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 
 import {
   api,
@@ -48,6 +48,8 @@ export const useManagerStore = defineStore('manager', () => {
   const compositeTemplatePreview = ref('')
   const compositeTemplatePreviewName = ref('')
   const busy = ref(false)
+  const refreshingSubscriptionIds = ref<number[]>([])
+  const refreshingRuleSourceIds = ref<number[]>([])
   const error = ref('')
   const notice = ref('')
 
@@ -99,6 +101,50 @@ export const useManagerStore = defineStore('manager', () => {
     } finally {
       busy.value = false
     }
+  }
+
+  function startRowRefresh(ids: Ref<number[]>, id: number): boolean {
+    if (ids.value.includes(id)) {
+      return false
+    }
+
+    ids.value = [...ids.value, id]
+    return true
+  }
+
+  function finishRowRefresh(ids: Ref<number[]>, id: number): void {
+    ids.value = ids.value.filter((item) => item !== id)
+  }
+
+  async function runRowRefresh(
+    label: string,
+    start: () => boolean,
+    finish: () => void,
+    action: () => Promise<void>,
+  ): Promise<boolean> {
+    if (!start()) {
+      return false
+    }
+
+    clearMessages()
+    try {
+      await action()
+      setNotice(label)
+      return true
+    } catch (caught) {
+      setError(toMessage(caught))
+      return false
+    } finally {
+      finish()
+    }
+  }
+
+  function isSubscriptionRefreshing(id: number): boolean {
+    return refreshingSubscriptionIds.value.includes(id)
+  }
+
+  function isRuleSourceRefreshing(id: number): boolean {
+    return refreshingRuleSourceIds.value.includes(id)
   }
 
   async function reloadSubscriptions(): Promise<void> {
@@ -157,10 +203,15 @@ export const useManagerStore = defineStore('manager', () => {
   }
 
   async function refreshSubscription(id: number): Promise<boolean> {
-    return run('订阅缓存已更新。', async () => {
-      await api.refreshSubscription(id)
-      await reloadSubscriptions()
-    })
+    return runRowRefresh(
+      '订阅缓存已更新。',
+      () => startRowRefresh(refreshingSubscriptionIds, id),
+      () => finishRowRefresh(refreshingSubscriptionIds, id),
+      async () => {
+        await api.refreshSubscription(id)
+        await reloadSubscriptions()
+      },
+    )
   }
   async function deleteSubscription(id: number): Promise<boolean> {
     return run('订阅已删除。', async () => {
@@ -264,10 +315,15 @@ export const useManagerStore = defineStore('manager', () => {
   }
 
   async function refreshRuleSource(id: number): Promise<boolean> {
-    return run('规则源已刷新。', async () => {
-      await api.refreshRuleSource(id)
-      await reloadRuleSources()
-    })
+    return runRowRefresh(
+      '规则源已刷新。',
+      () => startRowRefresh(refreshingRuleSourceIds, id),
+      () => finishRowRefresh(refreshingRuleSourceIds, id),
+      async () => {
+        await api.refreshRuleSource(id)
+        await reloadRuleSources()
+      },
+    )
   }
 
   async function deleteRuleSource(id: number): Promise<boolean> {
@@ -365,6 +421,8 @@ export const useManagerStore = defineStore('manager', () => {
     mergeProfilePreviewName,
     mergeProfiles,
     notice,
+    isRuleSourceRefreshing,
+    isSubscriptionRefreshing,
     previewCompositeTemplate,
     previewTemplatePatch,
     refreshAll,

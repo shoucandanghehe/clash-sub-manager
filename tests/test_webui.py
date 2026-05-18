@@ -55,3 +55,25 @@ def test_webui_falls_back_to_dev_dist(tmp_path: pathlib.Path) -> None:
 
     assert response.status_code == 200
     assert '<div id="fallback-app"></div>' in response.text
+
+
+def test_manual_refresh_controls_are_row_scoped() -> None:
+    root = pathlib.Path(__file__).resolve().parents[1]
+    manager_store = (root / 'webui/src/stores/manager.ts').read_text(encoding='utf-8')
+    subscriptions_view = (root / 'webui/src/views/SubscriptionsView.vue').read_text(encoding='utf-8')
+    rules_view = (root / 'webui/src/views/RulesView.vue').read_text(encoding='utf-8')
+
+    assert 'refreshingSubscriptionIds' in manager_store
+    assert 'refreshingRuleSourceIds' in manager_store
+    assert 'isSubscriptionRefreshing' in manager_store
+    assert 'isRuleSourceRefreshing' in manager_store
+    assert "return run('订阅缓存已更新。'" not in manager_store
+    assert "return run('规则源已刷新。'" not in manager_store
+
+    assert ':loading="store.isSubscriptionRefreshing(item.id)"' in subscriptions_view
+    assert ':disabled="!item.url || store.isSubscriptionRefreshing(item.id)"' in subscriptions_view
+    assert ':disabled="busy || !item.url"' not in subscriptions_view
+
+    assert ':loading="store.isRuleSourceRefreshing(item.id)"' in rules_view
+    assert ':disabled="store.isRuleSourceRefreshing(item.id)"' in rules_view
+    assert ':disabled="busy"' not in rules_view

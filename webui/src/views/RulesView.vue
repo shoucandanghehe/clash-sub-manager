@@ -176,12 +176,26 @@ async function saveRuleSource(): Promise<void> {
                 icon="mdi-refresh"
                 size="small"
                 variant="text"
-                :disabled="busy"
+                :loading="store.isRuleSourceRefreshing(item.id)"
+                :disabled="store.isRuleSourceRefreshing(item.id)"
                 title="手动更新规则缓存"
                 @click="refreshRuleSource(item)"
               />
-              <v-btn icon="mdi-pencil" size="small" variant="text" @click="openEditDialog(item)" />
-              <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="store.deleteRuleSource(item.id)" />
+              <v-btn
+                icon="mdi-pencil"
+                size="small"
+                variant="text"
+                :disabled="store.isRuleSourceRefreshing(item.id)"
+                @click="openEditDialog(item)"
+              />
+              <v-btn
+                icon="mdi-delete-outline"
+                size="small"
+                variant="text"
+                color="error"
+                :disabled="store.isRuleSourceRefreshing(item.id)"
+                @click="store.deleteRuleSource(item.id)"
+              />
             </div>
           </template>
         </v-data-table>

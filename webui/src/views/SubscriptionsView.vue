@@ -216,6 +216,7 @@ async function saveSubscription(): Promise<void> {
             color="primary"
             hide-details
             inset
+            :disabled="store.isSubscriptionRefreshing(item.id)"
             @update:model-value="store.toggleSubscription(item.id, Boolean($event))"
           />
           <v-chip :color="item.enabled ? 'primary' : 'default'" size="small" variant="tonal">
@@ -231,16 +232,30 @@ async function saveSubscription(): Promise<void> {
       </template>
       <template #item.actions="{ item }">
         <div class="d-flex justify-end ga-2 py-2">
-          <v-btn icon="mdi-pencil" size="small" variant="text" @click="openEditDialog(item)" />
+          <v-btn
+            icon="mdi-pencil"
+            size="small"
+            variant="text"
+            :disabled="store.isSubscriptionRefreshing(item.id)"
+            @click="openEditDialog(item)"
+          />
           <v-btn
             icon="mdi-refresh"
             size="small"
             variant="text"
-            :disabled="busy || !item.url"
+            :loading="store.isSubscriptionRefreshing(item.id)"
+            :disabled="!item.url || store.isSubscriptionRefreshing(item.id)"
             title="手动更新订阅缓存"
             @click="store.refreshSubscription(item.id)"
           />
-          <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="store.deleteSubscription(item.id)" />
+          <v-btn
+            icon="mdi-delete-outline"
+            size="small"
+            variant="text"
+            color="error"
+            :disabled="store.isSubscriptionRefreshing(item.id)"
+            @click="store.deleteSubscription(item.id)"
+          />
         </div>
       </template>
     </v-data-table>
