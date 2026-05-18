@@ -11,7 +11,7 @@ from ...core.composer import TemplateComposer
 from ...core.merger import SubscriptionMerger
 from ...core.template import TemplateProcessor
 from ..dependencies import get_db_session
-from ..schemas import ConvertRequest, YamlPreviewRead  # noqa: TC001
+from ..schemas import ConvertRequest, YamlPreviewRead
 from ._rule_providers import build_cached_rule_provider_urls
 
 router = APIRouter(tags=['convert'])

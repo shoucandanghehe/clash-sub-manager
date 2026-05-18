@@ -36,6 +36,7 @@ async def create_subscription(payload: SubscriptionCreate, db: DbSession) -> Sub
         name=payload.name,
         url=str(payload.url) if payload.url is not None else None,
         content=payload.content,
+        cached_content=None,
         proxy=payload.proxy,
         headers=payload.headers,
         follow_redirects=payload.follow_redirects,
@@ -71,6 +72,9 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
         'enabled': subscription.enabled,
     }
     updated = payload.model_dump(exclude_unset=True)
+    source_changed = (
+        'url' in updated and (str(updated['url']) if updated['url'] is not None else None) != subscription.url
+    ) or ('content' in updated and updated['content'] != subscription.content)
     merged = current | updated
     SubscriptionConfig.model_validate(
         {
@@ -88,6 +92,8 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
             setattr(subscription, field, str(value))
         else:
             setattr(subscription, field, value)
+    if source_changed:
+        subscription.cached_content = None
 
     await commit_or_name_conflict(db, resource_name='subscription', table_name='subscriptions')
     await db.refresh(subscription)

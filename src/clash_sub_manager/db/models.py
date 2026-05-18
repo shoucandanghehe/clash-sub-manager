@@ -35,6 +35,7 @@ class Subscription(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True)
     url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     content: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    cached_content: Mapped[str | None] = mapped_column(Text(), nullable=True)
     proxy: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     headers: Mapped[dict[str, str]] = mapped_column(JSON(), default=dict)
     follow_redirects: Mapped[bool] = mapped_column(Boolean(), default=True)

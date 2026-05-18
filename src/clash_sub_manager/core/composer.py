@@ -10,7 +10,7 @@ import yaml
 from .patch import PatchEngine
 
 if TYPE_CHECKING:
-    from ..db import CompositeTemplate, Template, TemplatePatch
+    from ..db import Template, TemplatePatch
 
 
 class TemplateComposer:

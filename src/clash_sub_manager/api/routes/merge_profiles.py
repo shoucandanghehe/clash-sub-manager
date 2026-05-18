@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 
 import yaml
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...core.composer import TemplateComposer
+from ...core.fetcher import SubscriptionFetcher, SubscriptionFetchError
 from ...core.merger import SubscriptionMerger
 from ...core.template import TemplateProcessor
 from ...db import CompositeTemplate, MergeProfile, Subscription, Template
@@ -21,6 +23,7 @@ from ..schemas import (
     MergeProfileRead,
     MergeProfileUpdate,
     SubscriptionSummaryRead,
+    TemplateSourceInput,
     TemplateSourceRead,
     YamlPreviewRead,
 )
@@ -105,8 +108,20 @@ async def _build_merge_profile_document(
             yaml.safe_load(source_content),
             rule_provider_urls=rule_provider_urls,
         )
-    subscriptions = [_to_subscription_config(subscription) for subscription in merge_profile.subscriptions]
-    return await SubscriptionMerger(subscriptions).merge(template)
+    resolved_subscriptions = await asyncio.gather(
+        *(_resolve_subscription_config(subscription) for subscription in merge_profile.subscriptions)
+    )
+    document = await SubscriptionMerger([config for config, _ in resolved_subscriptions]).merge(template)
+
+    cache_changed = False
+    for subscription, (_, fetched_content) in zip(merge_profile.subscriptions, resolved_subscriptions, strict=True):
+        if fetched_content is not None and subscription.cached_content != fetched_content:
+            subscription.cached_content = fetched_content
+            cache_changed = True
+    if cache_changed:
+        await db.commit()
+
+    return document
 
 
 def _serialize_template_source(merge_profile: MergeProfile) -> TemplateSourceRead | None:
@@ -146,10 +161,36 @@ def _to_subscription_config(subscription: Subscription) -> SubscriptionConfig:
     )
 
 
+def _to_inline_subscription_config(config: SubscriptionConfig, content: str) -> SubscriptionConfig:
+    return SubscriptionConfig(
+        name=config.name,
+        content=content,
+        proxy=config.proxy,
+        headers=config.headers,
+        follow_redirects=config.follow_redirects,
+        enabled=config.enabled,
+    )
+
+
+async def _resolve_subscription_config(subscription: Subscription) -> tuple[SubscriptionConfig, str | None]:
+    config = _to_subscription_config(subscription)
+    if not config.enabled or config.content is not None:
+        return config, None
+
+    try:
+        fetched_content = await SubscriptionFetcher(config).fetch()
+    except SubscriptionFetchError:
+        if subscription.cached_content is None:
+            raise
+        return _to_inline_subscription_config(config, subscription.cached_content), None
+
+    return _to_inline_subscription_config(config, fetched_content), fetched_content
+
+
 async def _apply_template_source(
     db: AsyncSession,
     merge_profile: MergeProfile,
-    template_source,
+    template_source: TemplateSourceInput | None,
 ) -> None:
     if template_source is None:
         merge_profile.template = None
@@ -160,7 +201,8 @@ async def _apply_template_source(
 
     if template_source.kind == 'template':
         template = await _get_template_or_404(db, template_source.id)
-        assert template is not None
+        if template is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='template not found')
         merge_profile.template = template
         merge_profile.template_id = template.id
         merge_profile.composite_template = None
@@ -168,7 +210,8 @@ async def _apply_template_source(
         return
 
     composite_template = await _get_composite_template_or_404(db, template_source.id)
-    assert composite_template is not None
+    if composite_template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='composite template not found')
     merge_profile.composite_template = composite_template
     merge_profile.composite_template_id = composite_template.id
     merge_profile.template = None

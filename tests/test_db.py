@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import pathlib
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection
 
 import clash_sub_manager.db.session as db_session
 from clash_sub_manager.db import (
@@ -63,6 +67,7 @@ async def test_init_db_creates_tables_and_supports_crud(tmp_path: pathlib.Path) 
                 name='demo',
                 url='https://example.com/sub',
                 content=None,
+                cached_content='trojan://secret@example.com:443#Cached',
                 proxy=None,
                 headers={'User-Agent': 'test'},
                 follow_redirects=True,
@@ -97,6 +102,7 @@ async def test_init_db_creates_tables_and_supports_crud(tmp_path: pathlib.Path) 
             stored_composite = composite_result.scalar_one()
 
             assert stored_subscription.headers == {'User-Agent': 'test'}
+            assert stored_subscription.cached_content == 'trojan://secret@example.com:443#Cached'
             assert stored_rule_source.content == 'MATCH,DIRECT'
             assert stored_patch.operations == [{'op': 'list_append', 'path': 'proxies', 'value': {'name': 'Node-A'}}]
             assert stored_composite.patch_sequence == [1]
@@ -142,7 +148,7 @@ async def test_init_db_rebuilds_legacy_subscriptions_table(tmp_path: pathlib.Pat
 
         async with engine.begin() as connection:
 
-            def read_subscription_columns(sync_connection) -> tuple[list[str], tuple[str, str]]:
+            def read_subscription_columns(sync_connection: Connection) -> tuple[list[str], tuple[str, str]]:
                 inspector = inspect(sync_connection)
                 columns = [column['name'] for column in inspector.get_columns('subscriptions')]
                 row = sync_connection.exec_driver_sql('SELECT name, headers FROM subscriptions WHERE id = 1').one()
@@ -151,7 +157,45 @@ async def test_init_db_rebuilds_legacy_subscriptions_table(tmp_path: pathlib.Pat
             columns, stored_subscription = await connection.run_sync(read_subscription_columns)
 
         assert 'template_id' not in columns
+        assert 'cached_content' in columns
         assert stored_subscription[0] == 'legacy'
         assert json.loads(stored_subscription[1]) == {'User-Agent': 'legacy'}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_init_db_adds_subscription_cache_column_to_existing_table(tmp_path: pathlib.Path) -> None:
+    db_path = pathlib.Path(tmp_path) / 'existing.db'
+    engine = create_engine(f'sqlite:///{db_path}')
+
+    try:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql(
+                """
+                CREATE TABLE subscriptions (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(255) UNIQUE NOT NULL,
+                    url VARCHAR(2048),
+                    content TEXT,
+                    proxy VARCHAR(2048),
+                    headers JSON NOT NULL,
+                    follow_redirects BOOLEAN NOT NULL,
+                    enabled BOOLEAN NOT NULL
+                )
+                """
+            )
+
+        await init_db(engine)
+
+        async with engine.begin() as connection:
+
+            def read_subscription_columns(sync_connection: Connection) -> list[str]:
+                inspector = inspect(sync_connection)
+                return [column['name'] for column in inspector.get_columns('subscriptions')]
+
+            columns = await connection.run_sync(read_subscription_columns)
+
+        assert 'cached_content' in columns
     finally:
         await engine.dispose()

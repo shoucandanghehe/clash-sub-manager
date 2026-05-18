@@ -6,6 +6,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from clash_sub_manager.api import create_app
+from clash_sub_manager.core import SubscriptionFetcher, SubscriptionFetchError
 
 
 @pytest.fixture
@@ -45,7 +46,6 @@ def test_merge_endpoint_merges_multiple_sources(client: TestClient) -> None:
     assert rendered['proxy-groups'][0]['proxies'] == ['One', 'Two', 'DIRECT']
 
 
-
 def test_subscription_crud_endpoints(client: TestClient) -> None:
     create_response = client.post(
         '/subscriptions',
@@ -59,13 +59,13 @@ def test_subscription_crud_endpoints(client: TestClient) -> None:
     assert list_response.json()[0]['name'] == 'demo'
 
     update_response = client.put(
-        f"/subscriptions/{created['id']}",
+        f'/subscriptions/{created["id"]}',
         json={'enabled': False},
     )
     assert update_response.status_code == 200
     assert update_response.json()['enabled'] is False
 
-    delete_response = client.delete(f"/subscriptions/{created['id']}")
+    delete_response = client.delete(f'/subscriptions/{created["id"]}')
     assert delete_response.status_code == 204
 
 
@@ -195,7 +195,7 @@ def test_merge_profile_crud_and_generate(client: TestClient) -> None:
     assert list_response.json()[0]['name'] == 'daily-profile'
 
     update_response = client.put(
-        f"/merge-profiles/{created['id']}",
+        f'/merge-profiles/{created["id"]}',
         json={'name': 'travel-profile', 'enabled': False, 'subscription_ids': [second_subscription.json()['id']]},
     )
     assert update_response.status_code == 200
@@ -204,23 +204,122 @@ def test_merge_profile_crud_and_generate(client: TestClient) -> None:
     assert updated['enabled'] is False
     assert [subscription['name'] for subscription in updated['subscriptions']] == ['beta']
 
-    generate_response = client.post(f"/merge-profiles/{created['id']}/generate")
+    generate_response = client.post(f'/merge-profiles/{created["id"]}/generate')
     assert generate_response.status_code == 200
     generated = yaml.safe_load(generate_response.json()['content'])
     assert [proxy['name'] for proxy in generated['proxies']] == ['Beta']
     assert generated['proxy-groups'][0]['name'] == 'Select'
     assert generated['rules'] == ['RULE-SET,applications,Select', 'MATCH,Select']
-    expected_provider_url = f"http://testserver/rule-providers/{rule_source_response.json()['id']}"
+    expected_provider_url = f'http://testserver/rule-providers/{rule_source_response.json()["id"]}'
     assert generated['rule-providers']['applications']['url'] == expected_provider_url
 
-    config_response = client.get(f"/merge-profiles/by-name/{updated['name']}/config")
+    config_response = client.get(f'/merge-profiles/by-name/{updated["name"]}/config')
     assert config_response.status_code == 200
     config_body = yaml.safe_load(config_response.text)
     assert [proxy['name'] for proxy in config_body['proxies']] == ['Beta']
     assert config_body['rule-providers']['applications']['url'] == expected_provider_url
 
-    delete_response = client.delete(f"/merge-profiles/{created['id']}")
+    delete_response = client.delete(f'/merge-profiles/{created["id"]}')
     assert delete_response.status_code == 204
+
+
+def test_merge_profile_uses_cached_subscription_when_remote_refresh_fails(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_fetch(self: SubscriptionFetcher) -> str:
+        nonlocal calls
+        if self.config.content is not None:
+            return self.config.content
+        calls += 1
+        if calls == 1:
+            return 'trojan://secret@example.com:443#Cached'
+        message = 'network down'
+        raise SubscriptionFetchError(message)
+
+    monkeypatch.setattr(SubscriptionFetcher, 'fetch', fake_fetch)
+
+    subscription_response = client.post(
+        '/subscriptions',
+        json={'name': 'remote', 'url': 'https://example.com/sub'},
+    )
+    assert subscription_response.status_code == 201
+
+    profile_response = client.post(
+        '/merge-profiles',
+        json={
+            'name': 'cached-profile',
+            'subscription_ids': [subscription_response.json()['id']],
+        },
+    )
+    assert profile_response.status_code == 201
+    profile_id = profile_response.json()['id']
+
+    first_generate = client.post(f'/merge-profiles/{profile_id}/generate')
+    assert first_generate.status_code == 200
+    first_rendered = yaml.safe_load(first_generate.json()['content'])
+    assert [proxy['name'] for proxy in first_rendered['proxies']] == ['Cached']
+
+    try:
+        second_generate = client.post(f'/merge-profiles/{profile_id}/generate')
+    except SubscriptionFetchError:
+        pytest.fail('expected cached subscription content to be used when refresh fails')
+
+    assert second_generate.status_code == 200
+    second_rendered = yaml.safe_load(second_generate.json()['content'])
+    assert [proxy['name'] for proxy in second_rendered['proxies']] == ['Cached']
+    assert calls == 2
+
+
+def test_subscription_source_update_clears_cached_remote_content(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_fetch(self: SubscriptionFetcher) -> str:
+        nonlocal calls
+        if self.config.content is not None:
+            return self.config.content
+        calls += 1
+        if calls == 1:
+            return 'trojan://secret@example.com:443#Old'
+        message = 'network down'
+        raise SubscriptionFetchError(message)
+
+    monkeypatch.setattr(SubscriptionFetcher, 'fetch', fake_fetch)
+
+    subscription_response = client.post(
+        '/subscriptions',
+        json={'name': 'remote', 'url': 'https://example.com/old-sub'},
+    )
+    assert subscription_response.status_code == 201
+    subscription_id = subscription_response.json()['id']
+
+    profile_response = client.post(
+        '/merge-profiles',
+        json={
+            'name': 'stale-cache-profile',
+            'subscription_ids': [subscription_id],
+        },
+    )
+    assert profile_response.status_code == 201
+    profile_id = profile_response.json()['id']
+
+    first_generate = client.post(f'/merge-profiles/{profile_id}/generate')
+    assert first_generate.status_code == 200
+
+    update_response = client.put(
+        f'/subscriptions/{subscription_id}',
+        json={'url': 'https://example.com/new-sub'},
+    )
+    assert update_response.status_code == 200
+
+    with pytest.raises(SubscriptionFetchError):
+        client.post(f'/merge-profiles/{profile_id}/generate')
+    assert calls == 2
 
 
 def test_merge_profile_accepts_composite_template(client: TestClient) -> None:
@@ -279,7 +378,7 @@ def test_merge_profile_accepts_composite_template(client: TestClient) -> None:
     created_profile = profile_response.json()
     assert created_profile['template_source'] == {'id': composite_id, 'name': 'derived-select', 'kind': 'composite'}
 
-    generated_response = client.post(f"/merge-profiles/{created_profile['id']}/generate")
+    generated_response = client.post(f'/merge-profiles/{created_profile["id"]}/generate')
     assert generated_response.status_code == 200
     generated = yaml.safe_load(generated_response.json()['content'])
     assert generated['proxy-groups'][0]['proxies'][0] == 'Beta'
@@ -288,17 +387,13 @@ def test_merge_profile_accepts_composite_template(client: TestClient) -> None:
     assert blocked_delete.status_code == 409
     assert blocked_delete.json() == {'detail': 'composite template is used by merge profile: composite-profile'}
 
+
 def test_template_patch_and_composite_template_endpoints(client: TestClient) -> None:
     template_response = client.post(
         '/templates',
         json={
             'name': 'base-template',
-            'content': (
-                'proxy-groups:\n'
-                '  - name: Auto\n'
-                '    proxies:\n'
-                '      - DIRECT\n'
-            ),
+            'content': ('proxy-groups:\n  - name: Auto\n    proxies:\n      - DIRECT\n'),
         },
     )
     assert template_response.status_code == 201
@@ -370,7 +465,7 @@ def test_template_patch_and_composite_template_endpoints(client: TestClient) -> 
     assert blocked_patch_delete.json() == {'detail': 'template patch is used by composite templates: derived-template'}
 
     composite_update = client.put(
-        f"/composite-templates/{created_composite['id']}",
+        f'/composite-templates/{created_composite["id"]}',
         json={'name': 'derived-template-v2', 'patch_sequence': [append_patch_id]},
     )
     assert composite_update.status_code == 200
@@ -378,7 +473,7 @@ def test_template_patch_and_composite_template_endpoints(client: TestClient) -> 
     assert updated_composite['name'] == 'derived-template-v2'
     assert yaml.safe_load(updated_composite['cached_content'])['proxy-groups'][0]['proxies'] == ['DIRECT', 'Node-A']
 
-    composite_delete = client.delete(f"/composite-templates/{created_composite['id']}")
+    composite_delete = client.delete(f'/composite-templates/{created_composite["id"]}')
     assert composite_delete.status_code == 204
 
     delete_replace_patch = client.delete(f'/template-patches/{replace_patch_id}')
@@ -396,12 +491,7 @@ def test_template_patch_list_remove_requires_index_and_supports_old_value(client
         json={
             'name': 'remove-template',
             'content': (
-                'proxy-groups:\n'
-                '  - name: Auto\n'
-                '    proxies:\n'
-                '      - DIRECT\n'
-                '      - Node-A\n'
-                '      - Node-B\n'
+                'proxy-groups:\n  - name: Auto\n    proxies:\n      - DIRECT\n      - Node-A\n      - Node-B\n'
             ),
         },
     )

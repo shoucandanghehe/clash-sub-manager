@@ -208,7 +208,7 @@ class TemplateSourceInput(BaseModel):
     id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode='after')
-    def validate_source(self):
+    def validate_source(self) -> TemplateSourceInput:
         has_kind = self.kind is not None
         has_id = self.id is not None
         if has_kind != has_id:

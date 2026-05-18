@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from platformdirs import user_data_path
@@ -13,6 +12,9 @@ from .base import Base
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
+
+    from sqlalchemy.engine import Connection
 
 
 APP_DATA_DIR_NAME = 'clash-sub-manager'
@@ -50,14 +52,21 @@ def create_session_factory(db_url: str) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
-def _ensure_merge_profile_columns(sync_connection) -> None:
+def _ensure_merge_profile_columns(sync_connection: Connection) -> None:
     inspector = inspect(sync_connection)
     columns = {column['name'] for column in inspector.get_columns('merge_profiles')}
     if 'composite_template_id' not in columns:
         sync_connection.exec_driver_sql('ALTER TABLE merge_profiles ADD COLUMN composite_template_id INTEGER')
 
 
-def _drop_subscription_template_column(sync_connection) -> None:
+def _ensure_subscription_cache_column(sync_connection: Connection) -> None:
+    inspector = inspect(sync_connection)
+    columns = {column['name'] for column in inspector.get_columns('subscriptions')}
+    if 'cached_content' not in columns:
+        sync_connection.exec_driver_sql('ALTER TABLE subscriptions ADD COLUMN cached_content TEXT')
+
+
+def _drop_subscription_template_column(sync_connection: Connection) -> None:
     inspector = inspect(sync_connection)
     columns = {column['name'] for column in inspector.get_columns('subscriptions')}
     if 'template_id' not in columns:
@@ -72,6 +81,7 @@ def _drop_subscription_template_column(sync_connection) -> None:
                 name VARCHAR(255) UNIQUE NOT NULL,
                 url VARCHAR(2048),
                 content TEXT,
+                cached_content TEXT,
                 proxy VARCHAR(2048),
                 headers JSON NOT NULL,
                 follow_redirects BOOLEAN NOT NULL,
@@ -79,16 +89,28 @@ def _drop_subscription_template_column(sync_connection) -> None:
             )
             """
         )
-        sync_connection.exec_driver_sql(
-            """
-            INSERT INTO subscriptions__new (
-                id, name, url, content, proxy, headers, follow_redirects, enabled
+        if 'cached_content' in columns:
+            sync_connection.exec_driver_sql(
+                """
+                INSERT INTO subscriptions__new (
+                    id, name, url, content, cached_content, proxy, headers, follow_redirects, enabled
+                )
+                SELECT
+                    id, name, url, content, cached_content, proxy, headers, follow_redirects, enabled
+                FROM subscriptions
+                """
             )
-            SELECT
-                id, name, url, content, proxy, headers, follow_redirects, enabled
-            FROM subscriptions
-            """
-        )
+        else:
+            sync_connection.exec_driver_sql(
+                """
+                INSERT INTO subscriptions__new (
+                    id, name, url, content, cached_content, proxy, headers, follow_redirects, enabled
+                )
+                SELECT
+                    id, name, url, content, NULL, proxy, headers, follow_redirects, enabled
+                FROM subscriptions
+                """
+            )
         sync_connection.exec_driver_sql('DROP TABLE subscriptions')
         sync_connection.exec_driver_sql('ALTER TABLE subscriptions__new RENAME TO subscriptions')
     finally:
@@ -100,6 +122,7 @@ async def init_db(engine: AsyncEngine) -> None:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_ensure_merge_profile_columns)
         await connection.run_sync(_drop_subscription_template_column)
+        await connection.run_sync(_ensure_subscription_cache_column)
 
 
 async def get_session(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:

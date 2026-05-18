@@ -15,9 +15,9 @@ from .session import (
 
 __all__ = [
     'APP_DATA_DIR_NAME',
+    'DEFAULT_DB_FILENAME',
     'Base',
     'CompositeTemplate',
-    'DEFAULT_DB_FILENAME',
     'MergeProfile',
     'RuleSource',
     'Subscription',
