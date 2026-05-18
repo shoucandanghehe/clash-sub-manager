@@ -69,6 +69,52 @@ def test_subscription_crud_endpoints(client: TestClient) -> None:
     assert delete_response.status_code == 204
 
 
+def test_subscription_manual_update_records_timestamp_and_cache(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_fetch(self: SubscriptionFetcher) -> str:
+        nonlocal calls
+        if self.config.content is not None:
+            return self.config.content
+        calls += 1
+        if calls == 1:
+            return 'trojan://secret@example.com:443#Manual'
+        message = 'network down'
+        raise SubscriptionFetchError(message)
+
+    monkeypatch.setattr(SubscriptionFetcher, 'fetch', fake_fetch)
+
+    subscription_response = client.post(
+        '/subscriptions',
+        json={'name': 'remote', 'url': 'https://example.com/sub'},
+    )
+    assert subscription_response.status_code == 201
+    subscription = subscription_response.json()
+    assert subscription['last_updated_at'] is None
+
+    refresh_response = client.post(f'/subscriptions/{subscription["id"]}/update')
+    assert refresh_response.status_code == 200
+    refreshed = refresh_response.json()
+    assert refreshed['last_updated_at'] is not None
+
+    profile_response = client.post(
+        '/merge-profiles',
+        json={
+            'name': 'manual-cache-profile',
+            'subscription_ids': [subscription['id']],
+        },
+    )
+    assert profile_response.status_code == 201
+    generate_response = client.post(f'/merge-profiles/{profile_response.json()["id"]}/generate')
+    assert generate_response.status_code == 200
+    rendered = yaml.safe_load(generate_response.json()['content'])
+    assert [proxy['name'] for proxy in rendered['proxies']] == ['Manual']
+    assert calls == 2
+
+
 def test_template_and_rule_source_endpoints(client: TestClient) -> None:
     template_response = client.post(
         '/templates',

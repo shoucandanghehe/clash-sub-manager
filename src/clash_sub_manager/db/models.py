@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, Column, ForeignKey, String, Table, Text
+from datetime import datetime  # noqa: TC003
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Table, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -36,6 +38,7 @@ class Subscription(Base):
     url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     content: Mapped[str | None] = mapped_column(Text(), nullable=True)
     cached_content: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    last_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     proxy: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     headers: Mapped[dict[str, str]] = mapped_column(JSON(), default=dict)
     follow_redirects: Mapped[bool] = mapped_column(Boolean(), default=True)
@@ -55,6 +58,7 @@ class RuleSource(Base):
     url: Mapped[str] = mapped_column(String(2048))
     auto_update: Mapped[bool] = mapped_column(Boolean(), default=True)
     content: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    last_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MergeProfile(Base):

@@ -42,7 +42,7 @@ def client(tmp_path: pathlib.Path) -> Iterator[TestClient]:
 
 @pytest.mark.asyncio
 async def test_rule_manager_updates_rule_source(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
-    engine = create_engine(f"sqlite:///{pathlib.Path(tmp_path) / 'rules.db'}")
+    engine = create_engine(f'sqlite:///{pathlib.Path(tmp_path) / "rules.db"}')
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     manager = RuleManager()
 
@@ -71,6 +71,7 @@ async def test_rule_manager_updates_rule_source(monkeypatch: pytest.MonkeyPatch,
 
             assert content == '# comment\nMATCH,DIRECT\nMATCH,DIRECT\n'
             assert source.content == content
+            assert source.last_updated_at is not None
             assert manager.parse_rules(content) == ['MATCH,DIRECT', 'MATCH,DIRECT']
     finally:
         await engine.dispose()
@@ -97,13 +98,22 @@ def test_cached_rule_provider_endpoint_returns_cached_content(client: TestClient
 def test_rule_update_api_and_get_rules(client: TestClient, rule_server: str) -> None:
     create_response = client.post('/rule-sources', json={'name': 'rules', 'url': rule_server, 'auto_update': False})
     assert create_response.status_code == 201
+    assert create_response.json()['last_updated_at'] is None
     source_id = create_response.json()['id']
 
     update_response = client.post(f'/rule-sources/{source_id}/update')
     assert update_response.status_code == 200
     assert 'MATCH,DIRECT' in update_response.json()
 
+    source_response = client.get(f'/rule-sources/{source_id}')
+    assert source_response.status_code == 200
+    assert source_response.json()['last_updated_at'] is not None
+
     rules_response = client.get('/rules')
     assert rules_response.status_code == 200
     assert rules_response.json() == ['MATCH,DIRECT', 'DOMAIN,example.com,Proxy']
 
+    url_update_response = client.put(f'/rule-sources/{source_id}', json={'url': 'https://example.com/new-rules.txt'})
+    assert url_update_response.status_code == 200
+    assert url_update_response.json()['content'] is None
+    assert url_update_response.json()['last_updated_at'] is None

@@ -43,6 +43,7 @@ const headers = [
   { title: '名称', key: 'name' },
   { title: '来源', key: 'source' },
   { title: '状态', key: 'status', sortable: false },
+  { title: '最后更新', key: 'last_updated_at' },
   { title: '操作', key: 'actions', sortable: false, align: 'end' },
 ] as const
 
@@ -96,6 +97,26 @@ const normalizedHeaders = computed(() => {
 const canSubmit = computed(() => {
   return form.name.trim().length > 0 && form.source.trim().length > 0 && normalizedHeaders.value.valid
 })
+
+function formatLastUpdated(value: string | null): string {
+  if (!value) {
+    return '未更新'
+  }
+
+  const updatedAt = new Date(value)
+  if (Number.isNaN(updatedAt.getTime())) {
+    return value
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(updatedAt)
+}
+
+function subscriptionLastUpdatedLabel(subscription: SubscriptionRecord): string {
+  return subscription.url ? formatLastUpdated(subscription.last_updated_at) : '内联内容'
+}
 
 function createHeaderRow(name = '', value = ''): HeaderRow {
   nextHeaderRowId.value += 1
@@ -203,9 +224,22 @@ async function saveSubscription(): Promise<void> {
         </div>
       </template>
 
+      <template #item.last_updated_at="{ item }">
+        <div class="text-body-2 text-medium-emphasis py-2">
+          {{ subscriptionLastUpdatedLabel(item) }}
+        </div>
+      </template>
       <template #item.actions="{ item }">
         <div class="d-flex justify-end ga-2 py-2">
           <v-btn icon="mdi-pencil" size="small" variant="text" @click="openEditDialog(item)" />
+          <v-btn
+            icon="mdi-refresh"
+            size="small"
+            variant="text"
+            :disabled="busy || !item.url"
+            title="手动更新订阅缓存"
+            @click="store.refreshSubscription(item.id)"
+          />
           <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="store.deleteSubscription(item.id)" />
         </div>
       </template>

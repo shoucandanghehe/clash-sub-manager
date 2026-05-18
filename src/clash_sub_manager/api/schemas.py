@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt  # noqa: TC003
+
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from ..models import SubscriptionConfig
@@ -105,6 +107,7 @@ class SubscriptionRead(ORMReadModel):
     headers: dict[str, str]
     follow_redirects: bool
     enabled: bool
+    last_updated_at: dt.datetime | None
 
 
 class SubscriptionCreate(SubscriptionSourceInput):
@@ -167,6 +170,7 @@ class RuleSourceRead(ORMReadModel):
     url: str
     auto_update: bool
     content: str | None
+    last_updated_at: dt.datetime | None
 
 
 class RuleSourceCreate(BaseModel):

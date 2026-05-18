@@ -156,6 +156,12 @@ export const useManagerStore = defineStore('manager', () => {
     return updateSubscription(id, { enabled })
   }
 
+  async function refreshSubscription(id: number): Promise<boolean> {
+    return run('订阅缓存已更新。', async () => {
+      await api.refreshSubscription(id)
+      await reloadSubscriptions()
+    })
+  }
   async function deleteSubscription(id: number): Promise<boolean> {
     return run('订阅已删除。', async () => {
       await api.deleteSubscription(id)
@@ -362,6 +368,7 @@ export const useManagerStore = defineStore('manager', () => {
     previewCompositeTemplate,
     previewTemplatePatch,
     refreshAll,
+    refreshSubscription,
     refreshRuleSource,
     ruleSources,
     runConvertPreview,

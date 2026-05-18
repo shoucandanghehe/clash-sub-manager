@@ -59,11 +59,20 @@ def _ensure_merge_profile_columns(sync_connection: Connection) -> None:
         sync_connection.exec_driver_sql('ALTER TABLE merge_profiles ADD COLUMN composite_template_id INTEGER')
 
 
-def _ensure_subscription_cache_column(sync_connection: Connection) -> None:
+def _ensure_subscription_columns(sync_connection: Connection) -> None:
     inspector = inspect(sync_connection)
     columns = {column['name'] for column in inspector.get_columns('subscriptions')}
     if 'cached_content' not in columns:
         sync_connection.exec_driver_sql('ALTER TABLE subscriptions ADD COLUMN cached_content TEXT')
+    if 'last_updated_at' not in columns:
+        sync_connection.exec_driver_sql('ALTER TABLE subscriptions ADD COLUMN last_updated_at DATETIME')
+
+
+def _ensure_rule_source_columns(sync_connection: Connection) -> None:
+    inspector = inspect(sync_connection)
+    columns = {column['name'] for column in inspector.get_columns('rule_sources')}
+    if 'last_updated_at' not in columns:
+        sync_connection.exec_driver_sql('ALTER TABLE rule_sources ADD COLUMN last_updated_at DATETIME')
 
 
 def _drop_subscription_template_column(sync_connection: Connection) -> None:
@@ -82,6 +91,7 @@ def _drop_subscription_template_column(sync_connection: Connection) -> None:
                 url VARCHAR(2048),
                 content TEXT,
                 cached_content TEXT,
+                last_updated_at DATETIME,
                 proxy VARCHAR(2048),
                 headers JSON NOT NULL,
                 follow_redirects BOOLEAN NOT NULL,
@@ -89,14 +99,38 @@ def _drop_subscription_template_column(sync_connection: Connection) -> None:
             )
             """
         )
-        if 'cached_content' in columns:
+        has_cached_content = 'cached_content' in columns
+        has_last_updated_at = 'last_updated_at' in columns
+        if has_cached_content and has_last_updated_at:
             sync_connection.exec_driver_sql(
                 """
                 INSERT INTO subscriptions__new (
-                    id, name, url, content, cached_content, proxy, headers, follow_redirects, enabled
+                    id, name, url, content, cached_content, last_updated_at, proxy, headers, follow_redirects, enabled
                 )
                 SELECT
-                    id, name, url, content, cached_content, proxy, headers, follow_redirects, enabled
+                    id, name, url, content, cached_content, last_updated_at, proxy, headers, follow_redirects, enabled
+                FROM subscriptions
+                """
+            )
+        elif has_cached_content:
+            sync_connection.exec_driver_sql(
+                """
+                INSERT INTO subscriptions__new (
+                    id, name, url, content, cached_content, last_updated_at, proxy, headers, follow_redirects, enabled
+                )
+                SELECT
+                    id, name, url, content, cached_content, NULL, proxy, headers, follow_redirects, enabled
+                FROM subscriptions
+                """
+            )
+        elif has_last_updated_at:
+            sync_connection.exec_driver_sql(
+                """
+                INSERT INTO subscriptions__new (
+                    id, name, url, content, cached_content, last_updated_at, proxy, headers, follow_redirects, enabled
+                )
+                SELECT
+                    id, name, url, content, NULL, last_updated_at, proxy, headers, follow_redirects, enabled
                 FROM subscriptions
                 """
             )
@@ -104,10 +138,10 @@ def _drop_subscription_template_column(sync_connection: Connection) -> None:
             sync_connection.exec_driver_sql(
                 """
                 INSERT INTO subscriptions__new (
-                    id, name, url, content, cached_content, proxy, headers, follow_redirects, enabled
+                    id, name, url, content, cached_content, last_updated_at, proxy, headers, follow_redirects, enabled
                 )
                 SELECT
-                    id, name, url, content, NULL, proxy, headers, follow_redirects, enabled
+                    id, name, url, content, NULL, NULL, proxy, headers, follow_redirects, enabled
                 FROM subscriptions
                 """
             )
@@ -122,7 +156,8 @@ async def init_db(engine: AsyncEngine) -> None:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_ensure_merge_profile_columns)
         await connection.run_sync(_drop_subscription_template_column)
-        await connection.run_sync(_ensure_subscription_cache_column)
+        await connection.run_sync(_ensure_subscription_columns)
+        await connection.run_sync(_ensure_rule_source_columns)
 
 
 async def get_session(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.fetcher import SubscriptionFetcher
 from ...db.models import CompositeTemplate, Subscription, Template
 from ...models import SubscriptionConfig
+from ...parsers import ProxyParser
 from ..dependencies import get_db_session
 from ..schemas import (
     SubscriptionCreate,
@@ -22,6 +25,12 @@ from ..schemas import (
 from ._db import commit_or_name_conflict
 
 router = APIRouter(tags=['config'])
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 
@@ -37,6 +46,7 @@ async def create_subscription(payload: SubscriptionCreate, db: DbSession) -> Sub
         url=str(payload.url) if payload.url is not None else None,
         content=payload.content,
         cached_content=None,
+        last_updated_at=None,
         proxy=payload.proxy,
         headers=payload.headers,
         follow_redirects=payload.follow_redirects,
@@ -94,8 +104,40 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
             setattr(subscription, field, value)
     if source_changed:
         subscription.cached_content = None
+        subscription.last_updated_at = None
 
     await commit_or_name_conflict(db, resource_name='subscription', table_name='subscriptions')
+    await db.refresh(subscription)
+    return subscription
+
+
+@router.post('/subscriptions/{subscription_id}/update', response_model=SubscriptionRead)
+async def refresh_subscription(subscription_id: int, db: DbSession) -> Subscription:
+    subscription = await db.get(Subscription, subscription_id)
+    if subscription is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='subscription not found')
+    if subscription.url is None or subscription.content is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='inline subscription cannot be refreshed',
+        )
+
+    config = SubscriptionConfig.model_validate(
+        {
+            'name': subscription.name,
+            'url': subscription.url,
+            'content': None,
+            'proxy': subscription.proxy,
+            'headers': subscription.headers,
+            'follow_redirects': subscription.follow_redirects,
+            'enabled': subscription.enabled,
+        }
+    )
+    content = await SubscriptionFetcher(config).fetch()
+    ProxyParser.parse_subscription(content)
+    subscription.cached_content = content
+    subscription.last_updated_at = _utc_now()
+    await db.commit()
     await db.refresh(subscription)
     return subscription
 

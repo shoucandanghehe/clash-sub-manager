@@ -68,13 +68,18 @@ async def test_init_db_creates_tables_and_supports_crud(tmp_path: pathlib.Path) 
                 url='https://example.com/sub',
                 content=None,
                 cached_content='trojan://secret@example.com:443#Cached',
+                last_updated_at=None,
                 proxy=None,
                 headers={'User-Agent': 'test'},
                 follow_redirects=True,
                 enabled=True,
             )
             rule_source = RuleSource(
-                name='rules', url='https://example.com/rules', auto_update=True, content='MATCH,DIRECT'
+                name='rules',
+                url='https://example.com/rules',
+                auto_update=True,
+                content='MATCH,DIRECT',
+                last_updated_at=None,
             )
             template_patch = TemplatePatch(
                 name='add-node',
@@ -103,7 +108,9 @@ async def test_init_db_creates_tables_and_supports_crud(tmp_path: pathlib.Path) 
 
             assert stored_subscription.headers == {'User-Agent': 'test'}
             assert stored_subscription.cached_content == 'trojan://secret@example.com:443#Cached'
+            assert stored_subscription.last_updated_at is None
             assert stored_rule_source.content == 'MATCH,DIRECT'
+            assert stored_rule_source.last_updated_at is None
             assert stored_patch.operations == [{'op': 'list_append', 'path': 'proxies', 'value': {'name': 'Node-A'}}]
             assert stored_composite.patch_sequence == [1]
             assert stored_composite.base_template_id == 1
@@ -158,6 +165,7 @@ async def test_init_db_rebuilds_legacy_subscriptions_table(tmp_path: pathlib.Pat
 
         assert 'template_id' not in columns
         assert 'cached_content' in columns
+        assert 'last_updated_at' in columns
         assert stored_subscription[0] == 'legacy'
         assert json.loads(stored_subscription[1]) == {'User-Agent': 'legacy'}
     finally:
@@ -165,7 +173,7 @@ async def test_init_db_rebuilds_legacy_subscriptions_table(tmp_path: pathlib.Pat
 
 
 @pytest.mark.asyncio
-async def test_init_db_adds_subscription_cache_column_to_existing_table(tmp_path: pathlib.Path) -> None:
+async def test_init_db_adds_update_tracking_columns_to_existing_tables(tmp_path: pathlib.Path) -> None:
     db_path = pathlib.Path(tmp_path) / 'existing.db'
     engine = create_engine(f'sqlite:///{db_path}')
 
@@ -185,17 +193,33 @@ async def test_init_db_adds_subscription_cache_column_to_existing_table(tmp_path
                 )
                 """
             )
+            await connection.exec_driver_sql(
+                """
+                CREATE TABLE rule_sources (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(255) UNIQUE NOT NULL,
+                    url VARCHAR(2048) NOT NULL,
+                    auto_update BOOLEAN NOT NULL,
+                    content TEXT
+                )
+                """
+            )
 
         await init_db(engine)
 
         async with engine.begin() as connection:
 
-            def read_subscription_columns(sync_connection: Connection) -> list[str]:
+            def read_columns(sync_connection: Connection) -> tuple[list[str], list[str]]:
                 inspector = inspect(sync_connection)
-                return [column['name'] for column in inspector.get_columns('subscriptions')]
+                return (
+                    [column['name'] for column in inspector.get_columns('subscriptions')],
+                    [column['name'] for column in inspector.get_columns('rule_sources')],
+                )
 
-            columns = await connection.run_sync(read_subscription_columns)
+            subscription_columns, rule_source_columns = await connection.run_sync(read_columns)
 
-        assert 'cached_content' in columns
+        assert 'cached_content' in subscription_columns
+        assert 'last_updated_at' in subscription_columns
+        assert 'last_updated_at' in rule_source_columns
     finally:
         await engine.dispose()

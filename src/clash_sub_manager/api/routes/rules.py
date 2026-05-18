@@ -51,8 +51,15 @@ async def update_rule_source(rule_source_id: int, payload: RuleSourceUpdate, db:
     rule_source = await db.get(RuleSource, rule_source_id)
     if rule_source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='rule source not found')
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updated = payload.model_dump(exclude_unset=True)
+    url_changed = 'url' in updated and str(updated['url']) != rule_source.url
+    content_changed = 'content' in updated and updated['content'] != rule_source.content
+    for field, value in updated.items():
         setattr(rule_source, field, str(value) if field == 'url' and value is not None else value)
+    if url_changed and 'content' not in updated:
+        rule_source.content = None
+    if url_changed or content_changed:
+        rule_source.last_updated_at = None
     await commit_or_name_conflict(db, resource_name='rule source', table_name='rule_sources')
     await db.refresh(rule_source)
     return rule_source

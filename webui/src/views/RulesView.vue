@@ -28,6 +28,7 @@ const headers = [
   { title: '链接', key: 'url' },
   { title: '更新策略', key: 'auto_update' },
   { title: '缓存状态', key: 'cache' },
+  { title: '最后更新', key: 'last_updated_at' },
   { title: '操作', key: 'actions', sortable: false, align: 'end' },
 ] as const
 
@@ -62,6 +63,22 @@ watch(
   },
   { immediate: true },
 )
+
+function formatLastUpdated(value: string | null): string {
+  if (!value) {
+    return '未更新'
+  }
+
+  const updatedAt = new Date(value)
+  if (Number.isNaN(updatedAt.getTime())) {
+    return value
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(updatedAt)
+}
 
 function resetForm(): void {
   editingId.value = null
@@ -147,10 +164,22 @@ async function saveRuleSource(): Promise<void> {
             </v-chip>
           </template>
 
+          <template #item.last_updated_at="{ item }">
+            <div class="text-body-2 text-medium-emphasis py-2">
+              {{ formatLastUpdated(item.last_updated_at) }}
+            </div>
+          </template>
           <template #item.actions="{ item }">
             <div class="d-flex justify-end ga-2 py-2">
               <v-btn icon="mdi-eye-outline" size="small" variant="text" @click="selectRuleSource(item)" />
-              <v-btn icon="mdi-refresh" size="small" variant="text" @click="refreshRuleSource(item)" />
+              <v-btn
+                icon="mdi-refresh"
+                size="small"
+                variant="text"
+                :disabled="busy"
+                title="手动更新规则缓存"
+                @click="refreshRuleSource(item)"
+              />
               <v-btn icon="mdi-pencil" size="small" variant="text" @click="openEditDialog(item)" />
               <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" @click="store.deleteRuleSource(item.id)" />
             </div>

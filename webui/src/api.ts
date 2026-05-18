@@ -7,6 +7,7 @@ export interface SubscriptionRecord {
   headers: Record<string, string>
   follow_redirects: boolean
   enabled: boolean
+  last_updated_at: string | null
 }
 
 export interface TemplateRecord {
@@ -22,6 +23,7 @@ export interface RuleSourceRecord {
   url: string
   auto_update: boolean
   content: string | null
+  last_updated_at: string | null
 }
 
 export interface SubscriptionSummaryRecord {
@@ -200,6 +202,7 @@ export const api = {
   updateSubscription: (id: number, payload: Partial<SubscriptionPayload>) =>
     request<SubscriptionRecord>(`/subscriptions/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteSubscription: (id: number) => request<void>(`/subscriptions/${id}`, { method: 'DELETE' }),
+  refreshSubscription: (id: number) => request<SubscriptionRecord>(`/subscriptions/${id}/update`, { method: 'POST' }),
   listTemplates: () => request<TemplateRecord[]>('/templates'),
   createTemplate: (payload: TemplatePayload) =>
     request<TemplateRecord>('/templates', { method: 'POST', body: JSON.stringify(payload) }),

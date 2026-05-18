@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import httpx
@@ -14,8 +15,13 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+
 class RuleUpdateError(RuntimeError):
     """Raised when rule-source refresh fails."""
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class RuleManager:
@@ -45,6 +51,7 @@ class RuleManager:
     async def update_rule_source(self, session: AsyncSession, source: RuleSource) -> str:
         content = await self.fetch_remote_content(source.url)
         source.content = content
+        source.last_updated_at = _utc_now()
         await session.commit()
         await session.refresh(source)
         return content

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Annotated
 
 import yaml
@@ -32,6 +33,10 @@ from ._rule_providers import build_cached_rule_provider_urls
 
 router = APIRouter(tags=['merge-profiles'])
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 async def _get_template_or_404(db: AsyncSession, template_id: int | None) -> Template | None:
@@ -114,9 +119,11 @@ async def _build_merge_profile_document(
     document = await SubscriptionMerger([config for config, _ in resolved_subscriptions]).merge(template)
 
     cache_changed = False
+    refreshed_at = _utc_now()
     for subscription, (_, fetched_content) in zip(merge_profile.subscriptions, resolved_subscriptions, strict=True):
-        if fetched_content is not None and subscription.cached_content != fetched_content:
+        if fetched_content is not None:
             subscription.cached_content = fetched_content
+            subscription.last_updated_at = refreshed_at
             cache_changed = True
     if cache_changed:
         await db.commit()
