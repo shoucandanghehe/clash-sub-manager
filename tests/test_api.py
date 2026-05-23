@@ -115,6 +115,31 @@ def test_subscription_manual_update_records_timestamp_and_cache(
     assert calls == 2
 
 
+def test_subscription_manual_update_rejects_unparseable_content(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_fetch(self: SubscriptionFetcher) -> str:
+        if self.config.content is not None:
+            return self.config.content
+        return 'vless://12345678-1234-1234-1234-1234567890ab@example.com:443#不支持节点'
+
+    monkeypatch.setattr(SubscriptionFetcher, 'fetch', fake_fetch)
+
+    subscription_response = client.post(
+        '/subscriptions',
+        json={'name': 'remote-invalid', 'url': 'https://example.com/sub'},
+    )
+    assert subscription_response.status_code == 201
+    subscription = subscription_response.json()
+
+    refresh_response = client.post(f'/subscriptions/{subscription["id"]}/update')
+
+    assert refresh_response.status_code == 422
+    assert refresh_response.json()['detail'].startswith('unsupported proxy scheme: vless://')
+    assert client.get(f'/subscriptions/{subscription["id"]}').json()['last_updated_at'] is None
+
+
 def test_template_and_rule_source_endpoints(client: TestClient) -> None:
     template_response = client.post(
         '/templates',

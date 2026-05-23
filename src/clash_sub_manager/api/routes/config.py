@@ -134,7 +134,10 @@ async def refresh_subscription(subscription_id: int, db: DbSession) -> Subscript
         }
     )
     content = await SubscriptionFetcher(config).fetch()
-    ProxyParser.parse_subscription(content)
+    try:
+        ProxyParser.parse_subscription(content)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     subscription.cached_content = content
     subscription.last_updated_at = _utc_now()
     await db.commit()

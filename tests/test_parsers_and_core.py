@@ -96,6 +96,35 @@ def test_parse_subscription_from_base64_payload() -> None:
     assert [node.name for node in nodes] == ['One', 'Two']
 
 
+def test_parse_subscription_reports_unsupported_plain_link_scheme() -> None:
+    content = (
+        'trojan://secret@example.com:443#可用节点\n'
+        'vless://12345678-1234-1234-1234-1234567890ab@example.com:443#不支持节点'
+    )
+
+    with pytest.raises(ValueError, match='unsupported proxy scheme: vless://'):
+        ProxyParser.parse_subscription(content)
+
+
+def test_parse_subscription_preserves_unescaped_spaces_in_fragment() -> None:
+    nodes = ProxyParser.parse_subscription('trojan://secret@example.com:443#Hong Kong 01')
+
+    assert [node.name for node in nodes] == ['Hong Kong 01']
+
+
+def test_parse_subscription_reports_unsupported_clash_proxy_type() -> None:
+    yaml_text = """
+proxies:
+  - name: 不支持节点
+    type: anytls
+    server: example.com
+    port: 443
+"""
+
+    with pytest.raises(ValueError, match='unsupported clash proxy type: anytls'):
+        ProxyParser.parse_subscription(yaml_text)
+
+
 def test_parse_clash_yaml_document() -> None:
     yaml_text = """
 proxies:

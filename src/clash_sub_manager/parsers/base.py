@@ -55,7 +55,18 @@ def parse_bool_flag(value: str | None) -> bool:
 
 
 def split_subscription_entries(content: str) -> list[str]:
-    return [chunk.strip() for chunk in content.replace('\r', '\n').split() if chunk.strip()]
+    lines = [
+        line.strip()
+        for line in content.replace('\r', '\n').split('\n')
+        if line.strip() and not line.strip().startswith('#')
+    ]
+    if len(lines) != 1:
+        return lines
+
+    chunks = [chunk.strip() for chunk in lines[0].split() if chunk.strip()]
+    if sum('://' in chunk for chunk in chunks) > 1:
+        return chunks
+    return lines
 
 
 def split_escaped(value: str, separator: str = ';') -> list[str]:
