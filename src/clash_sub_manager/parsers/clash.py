@@ -7,7 +7,7 @@ from typing import Literal, cast
 import yaml
 
 from ..models import ClashConfig
-from ..models.proxy import ProxyNodeModel, ShadowsocksNode, ShadowsocksRNode, TrojanNode, VMessNode
+from ..models.proxy import AnyTLSNode, ProxyNodeModel, ShadowsocksNode, ShadowsocksRNode, TrojanNode, VMessNode
 from .base import require_keys
 
 SupportedNetwork = Literal['tcp', 'ws', 'grpc']
@@ -41,6 +41,8 @@ class ClashParser:
                 return cls._parse_vmess(proxy)
             case 'trojan':
                 return cls._parse_trojan(proxy)
+            case 'anytls':
+                return cls._parse_anytls(proxy)
             case _:
                 msg = f'unsupported clash proxy type: {raw_type or "<missing>"}'
                 raise ValueError(msg)
@@ -117,6 +119,25 @@ class ClashParser:
         )
 
     @staticmethod
+    def _parse_anytls(proxy: dict[str, object]) -> AnyTLSNode:
+        require_keys(proxy, ('name', 'server', 'port', 'password'))
+        return AnyTLSNode(
+            name=str(proxy['name']),
+            server=str(proxy['server']),
+            port=ClashParser._int_value(proxy['port']),
+            password=str(proxy['password']),
+            udp=bool(proxy.get('udp', True)),
+            sni=ClashParser._optional_string(proxy.get('sni')),
+            skip_cert_verify=bool(proxy.get('skip-cert-verify', False)),
+            client_fingerprint=ClashParser._optional_string(proxy.get('client-fingerprint')),
+            alpn=ClashParser._string_list(proxy.get('alpn')),
+            idle_session_check_interval=ClashParser._optional_int_value(proxy.get('idle-session-check-interval')),
+            idle_session_timeout=ClashParser._optional_int_value(proxy.get('idle-session-timeout')),
+            min_idle_session=ClashParser._optional_int_value(proxy.get('min-idle-session')),
+            tfo=bool(proxy.get('tfo', False)),
+        )
+
+    @staticmethod
     def _int_value(value: object) -> int:
         if isinstance(value, int):
             return value
@@ -124,6 +145,12 @@ class ClashParser:
             return int(value)
         msg = 'expected an integer-compatible value'
         raise TypeError(msg)
+
+    @staticmethod
+    def _optional_int_value(value: object) -> int | None:
+        if value is None:
+            return None
+        return ClashParser._int_value(value)
 
     @staticmethod
     def _mapping(value: object) -> dict[str, object]:
@@ -140,6 +167,16 @@ class ClashParser:
             return None
         mapping = ClashParser._mapping(value)
         return {key: str(entry) for key, entry in mapping.items()}
+
+    @staticmethod
+    def _string_list(value: object) -> list[str] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            msg = 'expected a list'
+            raise TypeError(msg)
+        result = [str(entry).strip() for entry in value if str(entry).strip()]
+        return result or None
 
     @staticmethod
     def _optional_string(value: object) -> str | None:

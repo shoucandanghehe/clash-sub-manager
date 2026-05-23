@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from .anytls import AnyTLSParser
 from .base import decode_urlsafe_base64, split_subscription_entries
 from .clash import ClashParser
 from .ss import ShadowsocksParser
@@ -12,7 +13,7 @@ from .trojan import TrojanParser
 from .vmess import VMessParser
 
 if TYPE_CHECKING:
-    from ..models.proxy import ProxyNodeModel, ShadowsocksNode, ShadowsocksRNode, TrojanNode, VMessNode
+    from ..models.proxy import AnyTLSNode, ProxyNodeModel, ShadowsocksNode, ShadowsocksRNode, TrojanNode, VMessNode
     from .base import ShareLinkParser
 
 
@@ -28,6 +29,7 @@ class ProxyParser:
     """Facade over protocol-specific share-link parsers."""
 
     _PARSERS: ClassVar[dict[str, type[ShareLinkParser]]] = {
+        'anytls://': AnyTLSParser,
         'ss://': ShadowsocksParser,
         'ssr://': ShadowsocksRParser,
         'vmess://': VMessParser,
@@ -81,6 +83,10 @@ class ProxyParser:
             raise ValueError(msg) from exc
 
     @staticmethod
+    def parse_anytls(url: str) -> AnyTLSNode:
+        return AnyTLSParser.parse(url)
+
+    @staticmethod
     def parse_ss(url: str) -> ShadowsocksNode:
         return ShadowsocksParser.parse(url)
 
@@ -98,6 +104,7 @@ class ProxyParser:
 
 
 __all__ = [
+    'AnyTLSParser',
     'ClashParser',
     'ProxyParser',
     'ShadowsocksParser',

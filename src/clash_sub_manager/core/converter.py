@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from clash_sub_manager.models.proxy import (
+    AnyTLSNode,
     ProxyNodeModel,
     ShadowsocksNode,
     ShadowsocksRNode,
@@ -25,6 +26,8 @@ class ClashConverter:
                 return ClashConverter._convert_vmess(node)
             case TrojanNode():
                 return ClashConverter._convert_trojan(node)
+            case AnyTLSNode():
+                return ClashConverter._convert_anytls(node)
         msg = f'unsupported proxy node: {type(node)!r}'
         raise TypeError(msg)
 
@@ -119,6 +122,34 @@ class ClashConverter:
             }
         if node.network == 'grpc' and node.grpc_service_name is not None:
             proxy['grpc-opts'] = {'grpc-service-name': node.grpc_service_name}
+        return proxy
+
+    @staticmethod
+    def _convert_anytls(node: AnyTLSNode) -> dict[str, object]:
+        proxy: dict[str, object] = {
+            'name': node.name,
+            'type': node.type,
+            'server': node.server,
+            'port': node.port,
+            'password': node.password,
+            'udp': node.udp,
+        }
+        if node.sni is not None:
+            proxy['sni'] = node.sni
+        if node.skip_cert_verify:
+            proxy['skip-cert-verify'] = node.skip_cert_verify
+        if node.client_fingerprint is not None:
+            proxy['client-fingerprint'] = node.client_fingerprint
+        if node.alpn is not None:
+            proxy['alpn'] = node.alpn
+        if node.idle_session_check_interval is not None:
+            proxy['idle-session-check-interval'] = node.idle_session_check_interval
+        if node.idle_session_timeout is not None:
+            proxy['idle-session-timeout'] = node.idle_session_timeout
+        if node.min_idle_session is not None:
+            proxy['min-idle-session'] = node.min_idle_session
+        if node.tfo:
+            proxy['tfo'] = node.tfo
         return proxy
 
 

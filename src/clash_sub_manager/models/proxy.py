@@ -73,12 +73,27 @@ class TrojanNode(ProxyNode):
     grpc_service_name: str | None = None
 
 
+class AnyTLSNode(ProxyNode):
+    type: Literal['anytls'] = 'anytls'
+    password: str
+    udp: bool = True
+    sni: str | None = None
+    skip_cert_verify: bool = False
+    client_fingerprint: str | None = None
+    alpn: list[str] | None = None
+    idle_session_check_interval: int | None = Field(default=None, ge=0)
+    idle_session_timeout: int | None = Field(default=None, ge=0)
+    min_idle_session: int | None = Field(default=None, ge=0)
+    tfo: bool = False
+
+
 ProxyNodeModel = Annotated[
-    ShadowsocksNode | ShadowsocksRNode | VMessNode | TrojanNode,
+    ShadowsocksNode | ShadowsocksRNode | VMessNode | TrojanNode | AnyTLSNode,
     Field(discriminator='type'),
 ]
 
 __all__ = [
+    'AnyTLSNode',
     'ProxyNode',
     'ProxyNodeModel',
     'ShadowsocksNode',

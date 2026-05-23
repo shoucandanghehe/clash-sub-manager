@@ -116,13 +116,113 @@ def test_parse_subscription_reports_unsupported_clash_proxy_type() -> None:
     yaml_text = """
 proxies:
   - name: 不支持节点
+    type: vless
+    server: example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-1234567890ab
+"""
+
+    with pytest.raises(ValueError, match='unsupported clash proxy type: vless'):
+        ProxyParser.parse_subscription(yaml_text)
+
+
+def test_parse_anytls_clash_proxy() -> None:
+    yaml_text = """
+proxies:
+  - name: 日用香港
+    type: anytls
+    server: example.com
+    port: "443"
+    password: secret
+    client-fingerprint: chrome
+    udp: true
+    idle-session-check-interval: 30
+    idle-session-timeout: 30
+    min-idle-session: 0
+    sni: edge.example.com
+    alpn:
+      - h2
+      - http/1.1
+    skip-cert-verify: true
+    tfo: true
+"""
+
+    expected_auth = 'secret'
+
+    nodes = ProxyParser.parse_subscription(yaml_text)
+
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert node.type == 'anytls'
+    assert node.name == '日用香港'
+    assert node.password == expected_auth
+    assert node.client_fingerprint == 'chrome'
+    assert node.alpn == ['h2', 'http/1.1']
+    assert node.idle_session_check_interval == 30
+    assert node.idle_session_timeout == 30
+    assert node.min_idle_session == 0
+    assert node.sni == 'edge.example.com'
+    assert node.skip_cert_verify is True
+    assert node.tfo is True
+
+
+def test_parse_anytls_share_link() -> None:
+    expected_auth = 'letmein'
+
+    node = ProxyParser.parse_anytls(
+        'anytls://letmein@example.com:8443/?sni=real.example.com&insecure=1&alpn=h2,http/1.1#AnyTLS'
+    )
+
+    assert node.name == 'AnyTLS'
+    assert node.server == 'example.com'
+    assert node.port == 8443
+    assert node.password == expected_auth
+    assert node.sni == 'real.example.com'
+    assert node.skip_cert_verify is True
+    assert node.alpn == ['h2', 'http/1.1']
+
+
+def test_converter_preserves_anytls_fields() -> None:
+    nodes = ProxyParser.parse_subscription(
+        """
+proxies:
+  - name: AnyTLS
     type: anytls
     server: example.com
     port: 443
+    password: secret
+    client-fingerprint: chrome
+    udp: true
+    idle-session-check-interval: 30
+    idle-session-timeout: 30
+    min-idle-session: 0
+    sni: edge.example.com
+    alpn:
+      - h2
+      - http/1.1
+    skip-cert-verify: true
+    tfo: true
 """
+    )
 
-    with pytest.raises(ValueError, match='unsupported clash proxy type: anytls'):
-        ProxyParser.parse_subscription(yaml_text)
+    [proxy] = ClashConverter.convert_many(nodes)
+
+    assert proxy == {
+        'name': 'AnyTLS',
+        'type': 'anytls',
+        'server': 'example.com',
+        'port': 443,
+        'password': 'secret',
+        'udp': True,
+        'sni': 'edge.example.com',
+        'skip-cert-verify': True,
+        'client-fingerprint': 'chrome',
+        'alpn': ['h2', 'http/1.1'],
+        'idle-session-check-interval': 30,
+        'idle-session-timeout': 30,
+        'min-idle-session': 0,
+        'tfo': True,
+    }
 
 
 def test_parse_clash_yaml_document() -> None:
