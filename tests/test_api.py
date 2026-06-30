@@ -344,6 +344,37 @@ def test_merge_profile_uses_cached_subscription_when_remote_refresh_fails(
     assert calls == 2
 
 
+def test_merge_profile_rejects_empty_remote_subscription_content(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_fetch(self: SubscriptionFetcher) -> str:
+        if self.config.content is not None:
+            return self.config.content
+        return '  \n'
+
+    monkeypatch.setattr(SubscriptionFetcher, 'fetch', fake_fetch)
+
+    subscription_response = client.post(
+        '/subscriptions',
+        json={'name': 'empty-remote', 'url': 'https://example.com/sub'},
+    )
+    assert subscription_response.status_code == 201
+    profile_response = client.post(
+        '/merge-profiles',
+        json={
+            'name': 'empty-profile',
+            'subscription_ids': [subscription_response.json()['id']],
+        },
+    )
+    assert profile_response.status_code == 201
+
+    generate_response = client.post(f'/merge-profiles/{profile_response.json()["id"]}/generate')
+
+    assert generate_response.status_code == 422
+    assert generate_response.json() == {'detail': "subscription 'empty-remote' content must not be empty"}
+
+
 def test_subscription_source_update_clears_cached_remote_content(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

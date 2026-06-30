@@ -131,6 +131,18 @@ async def _build_merge_profile_document(
     return document
 
 
+async def _render_merge_profile_content(
+    merge_profile: MergeProfile,
+    request: Request,
+    db: AsyncSession,
+) -> str:
+    try:
+        document = await _build_merge_profile_document(merge_profile, request, db)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return TemplateComposer.render_document(document)
+
+
 def _serialize_template_source(merge_profile: MergeProfile) -> TemplateSourceRead | None:
     if merge_profile.template is not None:
         return TemplateSourceRead(id=merge_profile.template.id, name=merge_profile.template.name, kind='template')
@@ -169,6 +181,9 @@ def _to_subscription_config(subscription: Subscription) -> SubscriptionConfig:
 
 
 def _to_inline_subscription_config(config: SubscriptionConfig, content: str) -> SubscriptionConfig:
+    if not content.strip():
+        msg = f'subscription {config.name!r} content must not be empty'
+        raise ValueError(msg)
     return SubscriptionConfig(
         name=config.name,
         content=content,
@@ -284,8 +299,7 @@ async def get_merge_profile_config(profile_name: str, request: Request, db: DbSe
     merge_profile = (await db.scalars(statement)).one_or_none()
     if merge_profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='merge profile not found')
-    document = await _build_merge_profile_document(merge_profile, request, db)
-    content = TemplateComposer.render_document(document)
+    content = await _render_merge_profile_content(merge_profile, request, db)
     return Response(content=content, media_type='application/yaml')
 
 
@@ -300,5 +314,5 @@ async def delete_merge_profile(profile_id: int, db: DbSession) -> Response:
 @router.post('/merge-profiles/{profile_id}/generate', response_model=YamlPreviewRead)
 async def generate_merge_profile(profile_id: int, request: Request, db: DbSession) -> YamlPreviewRead:
     merge_profile = await _get_merge_profile_or_404(profile_id, db)
-    document = await _build_merge_profile_document(merge_profile, request, db)
-    return YamlPreviewRead(content=TemplateComposer.render_document(document))
+    content = await _render_merge_profile_content(merge_profile, request, db)
+    return YamlPreviewRead(content=content)
