@@ -206,6 +206,12 @@ async def _resolve_subscription_config(subscription: Subscription) -> tuple[Subs
             raise
         return _to_inline_subscription_config(config, subscription.cached_content), None
 
+    if not fetched_content.strip():
+        if subscription.cached_content is None:
+            msg = f'subscription {config.name!r} content must not be empty'
+            raise ValueError(msg)
+        return _to_inline_subscription_config(config, subscription.cached_content), None
+
     return _to_inline_subscription_config(config, fetched_content), fetched_content
 
 

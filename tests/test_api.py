@@ -344,6 +344,49 @@ def test_merge_profile_uses_cached_subscription_when_remote_refresh_fails(
     assert calls == 2
 
 
+def test_merge_profile_uses_cached_subscription_when_remote_refresh_is_empty(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_fetch(self: SubscriptionFetcher) -> str:
+        nonlocal calls
+        if self.config.content is not None:
+            return self.config.content
+        calls += 1
+        if calls == 1:
+            return 'trojan://secret@example.com:443#Cached'
+        return '  \n'
+
+    monkeypatch.setattr(SubscriptionFetcher, 'fetch', fake_fetch)
+
+    subscription_response = client.post(
+        '/subscriptions',
+        json={'name': 'remote-empty', 'url': 'https://example.com/sub'},
+    )
+    assert subscription_response.status_code == 201
+    profile_response = client.post(
+        '/merge-profiles',
+        json={
+            'name': 'cached-empty-profile',
+            'subscription_ids': [subscription_response.json()['id']],
+        },
+    )
+    assert profile_response.status_code == 201
+    profile_id = profile_response.json()['id']
+
+    first_generate = client.post(f'/merge-profiles/{profile_id}/generate')
+    assert first_generate.status_code == 200
+
+    second_generate = client.post(f'/merge-profiles/{profile_id}/generate')
+
+    assert second_generate.status_code == 200
+    rendered = yaml.safe_load(second_generate.json()['content'])
+    assert [proxy['name'] for proxy in rendered['proxies']] == ['Cached']
+    assert calls == 2
+
+
 def test_merge_profile_rejects_empty_remote_subscription_content(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
