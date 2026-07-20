@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pathlib
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import pytest
 from sqlalchemy import inspect, select
@@ -166,6 +167,7 @@ async def test_init_db_rebuilds_legacy_subscriptions_table(tmp_path: pathlib.Pat
         assert 'template_id' not in columns
         assert 'cached_content' in columns
         assert 'last_updated_at' in columns
+        assert 'excluded_node_names' in columns
         assert stored_subscription[0] == 'legacy'
         assert json.loads(stored_subscription[1]) == {'User-Agent': 'legacy'}
     finally:
@@ -220,6 +222,64 @@ async def test_init_db_adds_update_tracking_columns_to_existing_tables(tmp_path:
 
         assert 'cached_content' in subscription_columns
         assert 'last_updated_at' in subscription_columns
+        assert 'excluded_node_names' in subscription_columns
         assert 'last_updated_at' in rule_source_columns
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_init_db_migrates_target_template_metadata_and_public_profile_ids(tmp_path: pathlib.Path) -> None:
+    db_path = pathlib.Path(tmp_path) / 'target-migration.db'
+    engine = create_engine(f'sqlite:///{db_path}')
+
+    try:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql(
+                """
+                CREATE TABLE templates (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(255) UNIQUE NOT NULL,
+                    content TEXT NOT NULL,
+                    is_default BOOLEAN NOT NULL,
+                    format VARCHAR(16)
+                )
+                """
+            )
+            await connection.exec_driver_sql(
+                """
+                CREATE TABLE merge_profiles (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(255) UNIQUE NOT NULL,
+                    template_id INTEGER,
+                    enabled BOOLEAN NOT NULL,
+                    output_format VARCHAR(16)
+                )
+                """
+            )
+            await connection.exec_driver_sql(
+                "INSERT INTO templates (id, name, content, is_default, format) VALUES (1, 'legacy', '{}', 1, 'clash')"
+            )
+            await connection.exec_driver_sql(
+                'INSERT INTO merge_profiles (id, name, template_id, enabled, output_format) '
+                "VALUES (1, 'legacy-profile', 1, 1, 'clash')"
+            )
+
+        await init_db(engine)
+
+        async with engine.begin() as connection:
+            template = (
+                await connection.exec_driver_sql('SELECT target, schema_version, format FROM templates WHERE id = 1')
+            ).one()
+            profile = (await connection.exec_driver_sql('SELECT public_id FROM merge_profiles WHERE id = 1')).one()
+
+            def read_tables(sync_connection: Connection) -> set[str]:
+                return set(inspect(sync_connection).get_table_names())
+
+            tables = await connection.run_sync(read_tables)
+
+        assert tuple(template) == ('mihomo', '1', 'yaml')
+        assert str(UUID(str(profile[0]))) == profile[0]
+        assert 'merge_profile_targets' in tables
     finally:
         await engine.dispose()

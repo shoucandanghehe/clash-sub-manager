@@ -1,3 +1,5 @@
+import hashlib
+import json
 import pathlib
 from collections.abc import Iterator
 
@@ -15,6 +17,89 @@ def client(tmp_path: pathlib.Path) -> Iterator[TestClient]:
     app = create_app(db_url=f'sqlite:///{db_path}')
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def sing_box_client(tmp_path: pathlib.Path) -> Iterator[TestClient]:
+    db_path = pathlib.Path(tmp_path) / 'sing-box-api.db'
+    artifact_dir = pathlib.Path(tmp_path) / 'sing-box-artifacts'
+    binary_path = pathlib.Path(tmp_path) / 'sing-box'
+    binary_path.write_text(
+        '#!/usr/bin/env python3\n'
+        'import json\n'
+        'import pathlib\n'
+        'import sys\n'
+        'if sys.argv[1:] == ["version"]:\n'
+        '    print("sing-box version 1.13.14-test")\n'
+        '    raise SystemExit(0)\n'
+        'if len(sys.argv) == 4 and sys.argv[1:3] == ["check", "-c"]:\n'
+        '    json.loads(pathlib.Path(sys.argv[3]).read_text())\n'
+        '    raise SystemExit(0)\n'
+        'if len(sys.argv) == 6 and sys.argv[1:4] == ["rule-set", "compile", "--output"]:\n'
+        '    json.loads(pathlib.Path(sys.argv[5]).read_text())\n'
+        '    pathlib.Path(sys.argv[4]).write_bytes(b"srs")\n'
+        '    raise SystemExit(0)\n'
+        'raise SystemExit(2)\n',
+        encoding='utf-8',
+    )
+    binary_path.chmod(0o755)
+    binary_sha256 = hashlib.sha256(binary_path.read_bytes()).hexdigest()
+    app = create_app(
+        db_url=f'sqlite:///{db_path}',
+        sing_box_binary=binary_path,
+        sing_box_sha256=binary_sha256,
+        sing_box_artifact_dir=artifact_dir,
+    )
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def _minimal_sing_box_template() -> dict[str, object]:
+    return {
+        'outbounds': [
+            {'$csm': 'node_outbounds'},
+            {'type': 'selector', 'tag': 'proxy', 'outbounds': [{'$csm': 'node_tags'}]},
+            {'type': 'direct', 'tag': 'direct'},
+        ],
+        'route': {
+            'rule_set': [{'$csm': 'rule_sets', 'sources': []}],
+            'rules': [],
+            'final': 'proxy',
+        },
+    }
+
+
+def _create_sing_box_target(
+    client: TestClient,
+    *,
+    name: str,
+    subscription_content: str,
+    template_document: dict[str, object],
+) -> dict[str, object]:
+    subscription = client.post(
+        '/subscriptions',
+        json={'name': f'{name}-subscription', 'content': subscription_content},
+    ).json()
+    template = client.post(
+        '/templates',
+        json={
+            'name': f'{name}-template',
+            'content': json.dumps(template_document),
+            'target': 'sing-box',
+            'schema_version': '1.13',
+            'format': 'json',
+        },
+    ).json()
+    profile = client.post(
+        '/merge-profiles',
+        json={'name': name, 'subscription_ids': [subscription['id']]},
+    ).json()
+    response = client.put(
+        f'/merge-profiles/{profile["id"]}/targets/sing-box',
+        json={'compatibility_version': '1.13.14', 'template_id': template['id']},
+    )
+    assert response.status_code == 200
+    return profile
 
 
 def test_convert_endpoint_returns_clash_config(client: TestClient) -> None:
@@ -199,6 +284,407 @@ def test_duplicate_name_errors_are_friendly(client: TestClient) -> None:
     )
     assert duplicate_rule_source.status_code == 409
     assert duplicate_rule_source.json() == {'detail': 'rule source name already exists'}
+
+
+def test_mihomo_profile_keeps_legacy_config_url_with_target_metadata(client: TestClient) -> None:
+    subscription = client.post(
+        '/subscriptions',
+        json={'name': 'legacy-subscription', 'content': 'trojan://secret@example.com:443#Legacy'},
+    ).json()
+    template_response = client.post(
+        '/templates',
+        json={'name': 'legacy-template', 'content': 'rules:\n  - MATCH,DIRECT'},
+    )
+    assert template_response.status_code == 201
+    template = template_response.json()
+    assert template['target'] == 'mihomo'
+    assert template['schema_version'] == '1'
+    assert template['format'] == 'yaml'
+
+    profile_response = client.post(
+        '/merge-profiles',
+        json={
+            'name': 'legacy-profile',
+            'template_source': {'kind': 'template', 'id': template['id']},
+            'subscription_ids': [subscription['id']],
+        },
+    )
+    assert profile_response.status_code == 201
+    profile = profile_response.json()
+    assert profile['public_id']
+
+    config_response = client.get('/merge-profiles/by-name/legacy-profile/config')
+    assert config_response.status_code == 200
+    assert yaml.safe_load(config_response.text)['proxies'][0]['name'] == 'Legacy'
+
+
+def test_sing_box_target_rejects_target_version_and_template_mismatches(client: TestClient) -> None:
+    subscription = client.post(
+        '/subscriptions',
+        json={'name': 'target-subscription', 'content': 'trojan://secret@example.com:443#Target'},
+    ).json()
+    profile = client.post(
+        '/merge-profiles',
+        json={'name': 'target-profile', 'subscription_ids': [subscription['id']]},
+    ).json()
+    mihomo_template = client.post(
+        '/templates',
+        json={'name': 'mihomo-only', 'content': 'rules:\n  - MATCH,DIRECT'},
+    ).json()
+    sing_box_template = client.post(
+        '/templates',
+        json={
+            'name': 'sing-box-template',
+            'content': '{}',
+            'target': 'sing-box',
+            'schema_version': '1.13',
+            'format': 'json',
+        },
+    ).json()
+
+    wrong_template = client.put(
+        f'/merge-profiles/{profile["id"]}/targets/sing-box',
+        json={'compatibility_version': '1.13.14', 'template_id': mihomo_template['id']},
+    )
+    assert wrong_template.status_code == 422
+    assert wrong_template.json() == {'detail': 'template target must be sing-box'}
+
+    wrong_version = client.put(
+        f'/merge-profiles/{profile["id"]}/targets/sing-box',
+        json={'compatibility_version': '1.12.0', 'template_id': sing_box_template['id']},
+    )
+    assert wrong_version.status_code == 422
+    assert wrong_version.json() == {'detail': 'sing-box compatibility version must be 1.13.14'}
+
+
+def test_template_target_metadata_must_be_coherent(client: TestClient) -> None:
+    response = client.post(
+        '/templates',
+        json={
+            'name': 'invalid-sing-box-template',
+            'content': '{}',
+            'target': 'sing-box',
+            'schema_version': '1.12',
+            'format': 'json',
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()['detail'][0]['msg'].endswith(
+        'sing-box templates require schema_version 1.13 and format json'
+    )
+
+
+def test_sing_box_templates_cannot_use_composites(client: TestClient) -> None:
+    template = client.post(
+        '/templates',
+        json={
+            'name': 'sing-box-no-patches',
+            'content': '{}',
+            'target': 'sing-box',
+            'schema_version': '1.13',
+            'format': 'json',
+        },
+    ).json()
+
+    response = client.post(
+        '/composite-templates',
+        json={'name': 'invalid-sing-box-composite', 'base_template_id': template['id'], 'patch_sequence': []},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {'detail': 'sing-box templates do not support patches or composites'}
+
+
+def test_sing_box_target_returns_valid_complete_json(sing_box_client: TestClient) -> None:
+    rule_source = sing_box_client.post(
+        '/rule-sources',
+        json={
+            'name': 'domains',
+            'url': 'https://example.com/domains.txt',
+            'auto_update': False,
+            'content': "payload:\n  - '+.example.com'\n",
+        },
+    ).json()
+    assert rule_source['name'] == 'domains'
+    subscription = sing_box_client.post(
+        '/subscriptions',
+        json={
+            'name': 'sing-box-nodes',
+            'content': (
+                'proxies:\n'
+                '  - name: SS Obfs\n'
+                '    type: ss\n'
+                '    server: ss.example.com\n'
+                '    port: 8388\n'
+                '    cipher: aes-128-gcm\n'
+                '    password: ss-secret\n'
+                '    plugin: obfs\n'
+                '    plugin-opts:\n'
+                '      mode: http\n'
+                '      host: www.example.com\n'
+                '  - name: Trojan Secure\n'
+                '    type: trojan\n'
+                '    server: trojan.example.com\n'
+                '    port: 443\n'
+                '    password: trojan-secret\n'
+                '    sni: edge.example.com\n'
+                '    skip-cert-verify: true\n'
+                '  - name: AnyTLS\n'
+                '    type: anytls\n'
+                '    server: anytls.example.com\n'
+                '    port: 443\n'
+                '    password: anytls-secret\n'
+            ),
+        },
+    ).json()
+    template_document = {
+        'log': {'level': 'warn'},
+        'dns': {
+            'servers': [
+                {'type': 'udp', 'tag': 'dns-local', 'server': '223.5.5.5', 'server_port': 53},
+            ]
+        },
+        'inbounds': [
+            {
+                'type': 'tun',
+                'tag': 'tun-in',
+                'address': ['172.19.0.1/30', 'fdfe:dcba:9876::1/126'],
+                'auto_route': True,
+                'strict_route': True,
+            }
+        ],
+        'outbounds': [
+            {'$csm': 'node_outbounds'},
+            {'type': 'selector', 'tag': 'proxy', 'outbounds': [{'$csm': 'node_tags'}]},
+            {'type': 'direct', 'tag': 'direct'},
+        ],
+        'route': {
+            'rule_set': [
+                {
+                    '$csm': 'rule_sets',
+                    'sources': [{'source': 'domains', 'tag': 'domains', 'behavior': 'domain'}],
+                }
+            ],
+            'rules': [{'rule_set': ['domains'], 'action': 'route', 'outbound': 'proxy'}],
+            'final': 'proxy',
+            'auto_detect_interface': True,
+        },
+    }
+    template = sing_box_client.post(
+        '/templates',
+        json={
+            'name': 'native-sing-box',
+            'content': json.dumps(template_document),
+            'target': 'sing-box',
+            'schema_version': '1.13',
+            'format': 'json',
+        },
+    ).json()
+    profile = sing_box_client.post(
+        '/merge-profiles',
+        json={'name': 'sing-box-profile', 'subscription_ids': [subscription['id']]},
+    ).json()
+    binding_response = sing_box_client.put(
+        f'/merge-profiles/{profile["id"]}/targets/sing-box',
+        json={'compatibility_version': '1.13.14', 'template_id': template['id']},
+    )
+    assert binding_response.status_code == 200
+
+    config_response = sing_box_client.get(
+        f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json',
+        params={'compat': '1.13.14'},
+    )
+    assert config_response.status_code == 200
+    assert config_response.headers['content-type'].startswith('application/json')
+    assert config_response.headers['x-csm-warning-count'] == '1'
+    config = config_response.json()
+    node_outbounds = [outbound for outbound in config['outbounds'] if outbound['type'] not in {'selector', 'direct'}]
+    assert [outbound['tag'] for outbound in node_outbounds] == ['SS Obfs', 'Trojan Secure', 'AnyTLS']
+    assert node_outbounds[0]['plugin'] == 'obfs-local'
+    assert node_outbounds[0]['plugin_opts'] == 'obfs=http;obfs-host=www.example.com'
+    assert node_outbounds[1]['tls']['insecure'] is True
+    selector = next(outbound for outbound in config['outbounds'] if outbound['type'] == 'selector')
+    assert selector['outbounds'] == ['SS Obfs', 'Trojan Secure', 'AnyTLS']
+    rule_set = config['route']['rule_set'][0]
+    assert rule_set['format'] == 'source'
+    assert rule_set['url'].startswith('http://testserver/api/v1/sing-box/rule-sets/v4/')
+
+    rule_set_response = sing_box_client.get(rule_set['url'])
+    assert rule_set_response.status_code == 200
+    assert rule_set_response.json() == {'version': 4, 'rules': [{'domain_suffix': ['example.com']}]}
+
+
+def test_exact_subscription_node_exclusions_apply_to_both_targets(sing_box_client: TestClient) -> None:
+    subscription = sing_box_client.post(
+        '/subscriptions',
+        json={
+            'name': 'filtered-subscription',
+            'content': (
+                'proxies:\n'
+                "  - name: 'Traffic: 1 GB'\n"
+                '    type: trojan\n'
+                '    server: metadata.example.com\n'
+                '    port: 443\n'
+                '    password: metadata\n'
+                '  - name: Real Node\n'
+                '    type: trojan\n'
+                '    server: real.example.com\n'
+                '    port: 443\n'
+                '    password: real\n'
+            ),
+            'excluded_node_names': ['Traffic: 1 GB'],
+        },
+    ).json()
+    assert subscription['excluded_node_names'] == ['Traffic: 1 GB']
+    profile = sing_box_client.post(
+        '/merge-profiles',
+        json={'name': 'filtered-profile', 'subscription_ids': [subscription['id']]},
+    ).json()
+
+    mihomo_response = sing_box_client.get('/merge-profiles/by-name/filtered-profile/config')
+    assert mihomo_response.status_code == 200
+    assert [proxy['name'] for proxy in yaml.safe_load(mihomo_response.text)['proxies']] == ['Real Node']
+
+    template = sing_box_client.post(
+        '/templates',
+        json={
+            'name': 'filtered-sing-box-template',
+            'content': json.dumps(_minimal_sing_box_template()),
+            'target': 'sing-box',
+            'schema_version': '1.13',
+            'format': 'json',
+        },
+    ).json()
+    binding = sing_box_client.put(
+        f'/merge-profiles/{profile["id"]}/targets/sing-box',
+        json={'compatibility_version': '1.13.14', 'template_id': template['id']},
+    )
+    assert binding.status_code == 200
+
+    sing_box_response = sing_box_client.get(
+        f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json',
+        params={'compat': '1.13.14'},
+    )
+    assert sing_box_response.status_code == 200
+    assert sing_box_response.headers['x-csm-dropped-node-count'] == '1'
+    node_outbounds = [
+        outbound for outbound in sing_box_response.json()['outbounds'] if outbound['type'] not in {'selector', 'direct'}
+    ]
+    assert [outbound['tag'] for outbound in node_outbounds] == ['Real Node']
+
+
+def test_sing_box_target_rejects_residual_markers(sing_box_client: TestClient) -> None:
+    template_document = _minimal_sing_box_template()
+    template_document['experimental'] = {'$csm': 'unknown'}
+    profile = _create_sing_box_target(
+        sing_box_client,
+        name='invalid-marker-profile',
+        subscription_content='trojan://secret@example.com:443#Marker',
+        template_document=template_document,
+    )
+
+    response = sing_box_client.get(
+        f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json',
+        params={'compat': '1.13.14'},
+    )
+
+    assert response.status_code == 422
+    assert response.json()['detail'] == 'unsupported or misplaced $csm marker at $.experimental'
+
+
+@pytest.mark.parametrize(
+    ('subscription_content', 'expected_detail'),
+    [
+        (
+            (
+                'proxies:\n'
+                '  - name: VMess\n'
+                '    type: vmess\n'
+                '    server: vmess.example.com\n'
+                '    port: 443\n'
+                '    uuid: 00000000-0000-0000-0000-000000000001\n'
+            ),
+            'unsupported sing-box proxy node type: vmess',
+        ),
+        (
+            (
+                'proxies:\n'
+                '  - name: Unsupported Plugin\n'
+                '    type: ss\n'
+                '    server: ss.example.com\n'
+                '    port: 8388\n'
+                '    cipher: aes-128-gcm\n'
+                '    password: secret\n'
+                '    plugin: v2ray-plugin\n'
+            ),
+            "unsupported shadowsocks plugin for 'Unsupported Plugin': v2ray-plugin",
+        ),
+    ],
+)
+def test_sing_box_target_rejects_unsupported_nodes_and_plugins(
+    sing_box_client: TestClient,
+    subscription_content: str,
+    expected_detail: str,
+) -> None:
+    profile = _create_sing_box_target(
+        sing_box_client,
+        name=f'unsupported-{len(expected_detail)}',
+        subscription_content=subscription_content,
+        template_document=_minimal_sing_box_template(),
+    )
+
+    response = sing_box_client.get(
+        f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json',
+        params={'compat': '1.13.14'},
+    )
+
+    assert response.status_code == 422
+    assert response.json()['detail'] == expected_detail
+
+
+def test_sing_box_rule_set_digest_urls_are_immutable(sing_box_client: TestClient) -> None:
+    rule_source = sing_box_client.post(
+        '/rule-sources',
+        json={
+            'name': 'digest-rules',
+            'url': 'https://example.com/digest-rules.txt',
+            'auto_update': False,
+            'content': "payload:\n  - '+.first.example'\n",
+        },
+    ).json()
+    template_document = _minimal_sing_box_template()
+    route = template_document['route']
+    assert isinstance(route, dict)
+    rule_sets = route['rule_set']
+    assert isinstance(rule_sets, list) and isinstance(rule_sets[0], dict)
+    rule_sets[0]['sources'] = [{'source': 'digest-rules', 'tag': 'digest-rules', 'behavior': 'domain'}]
+    profile = _create_sing_box_target(
+        sing_box_client,
+        name='digest-profile',
+        subscription_content='trojan://secret@example.com:443#Digest',
+        template_document=template_document,
+    )
+    config_url = f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json'
+
+    first_config = sing_box_client.get(config_url, params={'compat': '1.13.14'}).json()
+    first_url = first_config['route']['rule_set'][0]['url']
+    first_content = sing_box_client.get(first_url).json()
+
+    update_response = sing_box_client.put(
+        f'/rule-sources/{rule_source["id"]}',
+        json={'content': "payload:\n  - '+.second.example'\n"},
+    )
+    assert update_response.status_code == 200
+    second_config = sing_box_client.get(config_url, params={'compat': '1.13.14'}).json()
+    second_url = second_config['route']['rule_set'][0]['url']
+
+    assert first_url != second_url
+    assert sing_box_client.get(first_url).json() == first_content
+    assert sing_box_client.get(second_url).json() == {
+        'version': 4,
+        'rules': [{'domain_suffix': ['second.example']}],
+    }
 
 
 def test_merge_profile_crud_and_generate(client: TestClient) -> None:

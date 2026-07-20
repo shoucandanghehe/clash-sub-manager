@@ -378,6 +378,7 @@ export const useManagerStore = defineStore('manager', () => {
             headers: subscription.headers,
             follow_redirects: subscription.follow_redirects,
             enabled: subscription.enabled,
+            excluded_node_names: subscription.excluded_node_names,
           })),
         template,
       }

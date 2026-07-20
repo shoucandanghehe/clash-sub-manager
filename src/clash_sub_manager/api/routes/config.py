@@ -1,7 +1,5 @@
 """CRUD endpoints for subscriptions and templates."""
 
-from __future__ import annotations
-
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -10,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.fetcher import SubscriptionFetcher
-from ...db.models import CompositeTemplate, Subscription, Template
+from ...db.models import CompositeTemplate, MergeProfileTarget, Subscription, Template
 from ...models import SubscriptionConfig
 from ...parsers import ProxyParser
 from ..dependencies import get_db_session
@@ -51,6 +49,7 @@ async def create_subscription(payload: SubscriptionCreate, db: DbSession) -> Sub
         headers=payload.headers,
         follow_redirects=payload.follow_redirects,
         enabled=payload.enabled,
+        excluded_node_names=payload.excluded_node_names,
     )
     db.add(subscription)
     await commit_or_name_conflict(db, resource_name='subscription', table_name='subscriptions')
@@ -80,6 +79,7 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
         'headers': subscription.headers,
         'follow_redirects': subscription.follow_redirects,
         'enabled': subscription.enabled,
+        'excluded_node_names': subscription.excluded_node_names,
     }
     updated = payload.model_dump(exclude_unset=True)
     source_changed = (
@@ -95,6 +95,7 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
             'headers': merged['headers'],
             'follow_redirects': merged['follow_redirects'],
             'enabled': merged['enabled'],
+            'excluded_node_names': merged['excluded_node_names'],
         }
     )
     for field, value in merged.items():
@@ -162,7 +163,7 @@ async def list_templates(db: DbSession) -> list[Template]:
 
 @router.post('/templates', response_model=TemplateRead, status_code=status.HTTP_201_CREATED)
 async def create_template(payload: TemplateCreate, db: DbSession) -> Template:
-    template = Template(name=payload.name, content=payload.content, is_default=payload.is_default)
+    template = Template(**payload.model_dump())
     db.add(template)
     await commit_or_name_conflict(db, resource_name='template', table_name='templates')
     await db.refresh(template)
@@ -182,7 +183,14 @@ async def update_template(template_id: int, payload: TemplateUpdate, db: DbSessi
     template = await db.get(Template, template_id)
     if template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='template not found')
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updated = payload.model_dump(exclude_unset=True)
+    for field in ('target', 'schema_version', 'format'):
+        if field in updated and updated[field] != getattr(template, field):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='template target metadata is immutable',
+            )
+    for field, value in updated.items():
         setattr(template, field, value)
     await commit_or_name_conflict(db, resource_name='template', table_name='templates')
     await db.refresh(template)
@@ -194,6 +202,12 @@ async def delete_template(template_id: int, db: DbSession) -> Response:
     template = await db.get(Template, template_id)
     if template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='template not found')
+    target_binding = await db.scalar(select(MergeProfileTarget.id).where(MergeProfileTarget.template_id == template_id))
+    if target_binding is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='template is used by a merge profile target',
+        )
 
     composite_template = await db.scalar(
         select(CompositeTemplate.id).where(CompositeTemplate.base_template_id == template_id)

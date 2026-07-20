@@ -1,7 +1,5 @@
 """CRUD endpoints for template patches."""
 
-from __future__ import annotations
-
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -33,6 +31,11 @@ async def _get_template_or_404(db: AsyncSession, template_id: int) -> Template:
     template = await db.get(Template, template_id)
     if template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='template not found')
+    if template.target != 'mihomo':
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail='sing-box templates do not support patches or composites',
+        )
     return template
 
 

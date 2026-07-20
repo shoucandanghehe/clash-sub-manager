@@ -1,5 +1,6 @@
 """FastAPI application wiring."""
 
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
@@ -9,7 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .. import __version__
-from ..db import create_engine, default_db_url, init_db, normalize_async_db_url
+from ..core.singbox import SingBoxArtifactStore, SingBoxValidator
+from ..db import create_engine, default_db_path, default_db_url, init_db, normalize_async_db_url
 from .routes import api_router
 
 WEBUI_STATIC = Path(__file__).resolve().parent.parent / 'static' / 'webui'
@@ -42,11 +44,28 @@ def _build_lifespan(db_url: str) -> Callable[[FastAPI], AbstractAsyncContextMana
     return lifespan
 
 
-def create_app(*, db_url: str | None = None) -> FastAPI:
+def create_app(
+    *,
+    db_url: str | None = None,
+    sing_box_binary: str | Path | None = None,
+    sing_box_sha256: str | None = None,
+    sing_box_artifact_dir: str | Path | None = None,
+) -> FastAPI:
     """Create the application instance."""
 
     normalized_db_url = normalize_async_db_url(db_url or default_db_url())
     app = FastAPI(title='Clash Sub Manager', version=__version__, lifespan=_build_lifespan(normalized_db_url))
+    artifact_dir = Path(
+        sing_box_artifact_dir
+        or os.environ.get('CLASH_SUB_MANAGER_SING_BOX_ARTIFACT_DIR')
+        or default_db_path().parent / 'sing-box'
+    )
+    binary_value = sing_box_binary or os.environ.get('CLASH_SUB_MANAGER_SING_BOX_BINARY')
+    expected_sha256 = sing_box_sha256 or os.environ.get('CLASH_SUB_MANAGER_SING_BOX_SHA256')
+    app.state.sing_box_store = SingBoxArtifactStore(artifact_dir)
+    app.state.sing_box_validator = (
+        SingBoxValidator(Path(binary_value), expected_sha256) if binary_value is not None and expected_sha256 else None
+    )
     app.include_router(api_router)
     webui_dir = _resolve_webui_dir()
     if webui_dir is not None:

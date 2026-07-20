@@ -7,6 +7,7 @@ export interface SubscriptionRecord {
   headers: Record<string, string>
   follow_redirects: boolean
   enabled: boolean
+  excluded_node_names: string[]
   last_updated_at: string | null
 }
 
@@ -15,6 +16,9 @@ export interface TemplateRecord {
   name: string
   content: string
   is_default: boolean
+  target: 'mihomo' | 'sing-box'
+  schema_version: string
+  format: 'yaml' | 'json'
 }
 
 export interface RuleSourceRecord {
@@ -79,6 +83,7 @@ export interface TemplateSourceRecord {
 }
 
 export interface MergeProfileRecord {
+  public_id: string
   id: number
   name: string
   enabled: boolean
@@ -94,12 +99,16 @@ export interface SubscriptionPayload {
   headers?: Record<string, string>
   follow_redirects?: boolean
   enabled?: boolean
+  excluded_node_names?: string[]
 }
 
 export interface TemplatePayload {
   name: string
   content: string
   is_default?: boolean
+  target?: 'mihomo' | 'sing-box'
+  schema_version?: string
+  format?: 'yaml' | 'json'
 }
 
 export interface TemplatePatchPayload {

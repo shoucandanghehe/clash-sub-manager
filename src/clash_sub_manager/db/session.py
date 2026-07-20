@@ -1,21 +1,15 @@
 """Async SQLAlchemy engine and session helpers."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
+from pathlib import Path
+from uuid import UUID, uuid4
 
 from platformdirs import user_data_path
 from sqlalchemy import inspect
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from .base import Base
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-    from pathlib import Path
-
-    from sqlalchemy.engine import Connection
-
 
 APP_DATA_DIR_NAME = 'clash-sub-manager'
 DEFAULT_DB_FILENAME = 'clash_sub_manager.db'
@@ -57,6 +51,48 @@ def _ensure_merge_profile_columns(sync_connection: Connection) -> None:
     columns = {column['name'] for column in inspector.get_columns('merge_profiles')}
     if 'composite_template_id' not in columns:
         sync_connection.exec_driver_sql('ALTER TABLE merge_profiles ADD COLUMN composite_template_id INTEGER')
+    if 'public_id' not in columns:
+        sync_connection.exec_driver_sql('ALTER TABLE merge_profiles ADD COLUMN public_id VARCHAR(36)')
+
+    rows = sync_connection.exec_driver_sql('SELECT id, public_id FROM merge_profiles ORDER BY id').all()
+    seen: set[str] = set()
+    for profile_id, raw_public_id in rows:
+        public_id = str(raw_public_id or '').strip()
+        try:
+            normalized = str(UUID(public_id))
+        except ValueError:
+            normalized = ''
+        if not normalized or normalized in seen:
+            normalized = str(uuid4())
+            sync_connection.exec_driver_sql(
+                'UPDATE merge_profiles SET public_id = ? WHERE id = ?',
+                (normalized, profile_id),
+            )
+        seen.add(normalized)
+    sync_connection.exec_driver_sql(
+        'CREATE UNIQUE INDEX IF NOT EXISTS ix_merge_profiles_public_id ON merge_profiles(public_id)'
+    )
+
+
+def _ensure_template_columns(sync_connection: Connection) -> None:
+    inspector = inspect(sync_connection)
+    columns = {column['name'] for column in inspector.get_columns('templates')}
+    if 'target' not in columns:
+        sync_connection.exec_driver_sql("ALTER TABLE templates ADD COLUMN target VARCHAR(32) NOT NULL DEFAULT 'mihomo'")
+    if 'schema_version' not in columns:
+        sync_connection.exec_driver_sql(
+            "ALTER TABLE templates ADD COLUMN schema_version VARCHAR(32) NOT NULL DEFAULT '1'"
+        )
+    if 'format' not in columns:
+        sync_connection.exec_driver_sql("ALTER TABLE templates ADD COLUMN format VARCHAR(16) NOT NULL DEFAULT 'yaml'")
+
+    sync_connection.exec_driver_sql("UPDATE templates SET target = 'mihomo' WHERE target IS NULL OR target = ''")
+    sync_connection.exec_driver_sql(
+        "UPDATE templates SET schema_version = '1' WHERE schema_version IS NULL OR schema_version = ''"
+    )
+    sync_connection.exec_driver_sql(
+        "UPDATE templates SET format = 'yaml' WHERE format IS NULL OR format = '' OR lower(format) = 'clash'"
+    )
 
 
 def _ensure_subscription_columns(sync_connection: Connection) -> None:
@@ -66,6 +102,13 @@ def _ensure_subscription_columns(sync_connection: Connection) -> None:
         sync_connection.exec_driver_sql('ALTER TABLE subscriptions ADD COLUMN cached_content TEXT')
     if 'last_updated_at' not in columns:
         sync_connection.exec_driver_sql('ALTER TABLE subscriptions ADD COLUMN last_updated_at DATETIME')
+    if 'excluded_node_names' not in columns:
+        sync_connection.exec_driver_sql(
+            "ALTER TABLE subscriptions ADD COLUMN excluded_node_names JSON NOT NULL DEFAULT '[]'"
+        )
+    sync_connection.exec_driver_sql(
+        "UPDATE subscriptions SET excluded_node_names = '[]' WHERE excluded_node_names IS NULL"
+    )
 
 
 def _ensure_rule_source_columns(sync_connection: Connection) -> None:
@@ -155,6 +198,7 @@ async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_ensure_merge_profile_columns)
+        await connection.run_sync(_ensure_template_columns)
         await connection.run_sync(_drop_subscription_template_column)
         await connection.run_sync(_ensure_subscription_columns)
         await connection.run_sync(_ensure_rule_source_columns)

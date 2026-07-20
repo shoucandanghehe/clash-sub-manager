@@ -1,8 +1,7 @@
 """Pydantic request and response models for the HTTP API."""
 
-from __future__ import annotations
-
-import datetime as dt  # noqa: TC003
+import datetime as dt
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -44,15 +43,32 @@ def _validate_subscription_ids(value: list[int] | None, *, required: bool) -> li
     return value
 
 
+def _normalize_excluded_node_names(value: list[str]) -> list[str]:
+    normalized = [name.strip() for name in value]
+    if any(not name for name in normalized):
+        msg = 'excluded node names must not be blank'
+        raise ValueError(msg)
+    if len(set(normalized)) != len(normalized):
+        msg = 'excluded node names must be unique'
+        raise ValueError(msg)
+    return normalized
+
+
 class SubscriptionSourceInput(BaseModel):
     url: HttpUrl | None = None
     content: str | None = None
     proxy: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     follow_redirects: bool = True
+    excluded_node_names: list[str] = Field(default_factory=list)
+
+    @field_validator('excluded_node_names')
+    @classmethod
+    def validate_excluded_node_names(cls, value: list[str]) -> list[str]:
+        return _normalize_excluded_node_names(value)
 
     @model_validator(mode='after')
-    def validate_source(self) -> SubscriptionSourceInput:
+    def validate_source(self) -> 'SubscriptionSourceInput':
         has_url = self.url is not None
         has_content = self.content is not None and self.content.strip() != ''
         if has_url == has_content:
@@ -68,6 +84,7 @@ class SubscriptionSourceInput(BaseModel):
             proxy=self.proxy,
             headers=self.headers,
             follow_redirects=self.follow_redirects,
+            excluded_node_names=self.excluded_node_names,
         )
 
 
@@ -80,7 +97,7 @@ class MergeRequest(BaseModel):
     template: dict[str, object] | None = None
 
     @model_validator(mode='after')
-    def validate_configs(self) -> MergeRequest:
+    def validate_configs(self) -> 'MergeRequest':
         if not self.configs:
             msg = 'at least one subscription config is required'
             raise ValueError(msg)
@@ -107,6 +124,7 @@ class SubscriptionRead(ORMReadModel):
     headers: dict[str, str]
     follow_redirects: bool
     enabled: bool
+    excluded_node_names: list[str]
     last_updated_at: dt.datetime | None
 
 
@@ -128,6 +146,14 @@ class SubscriptionUpdate(BaseModel):
     headers: dict[str, str] | None = None
     follow_redirects: bool | None = None
     enabled: bool | None = None
+    excluded_node_names: list[str] | None = None
+
+    @field_validator('excluded_node_names')
+    @classmethod
+    def validate_excluded_node_names(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_excluded_node_names(value)
 
     @field_validator('name')
     @classmethod
@@ -135,17 +161,37 @@ class SubscriptionUpdate(BaseModel):
         return _normalize_name(value, required=False)
 
 
+def validate_template_metadata(target: str, schema_version: str, template_format: str) -> None:
+    if target == 'mihomo' and (schema_version != '1' or template_format != 'yaml'):
+        msg = 'mihomo templates require schema_version 1 and format yaml'
+        raise ValueError(msg)
+    if target == 'sing-box' and (schema_version != '1.13' or template_format != 'json'):
+        msg = 'sing-box templates require schema_version 1.13 and format json'
+        raise ValueError(msg)
+
+
 class TemplateRead(ORMReadModel):
     id: int
     name: str
     content: str
     is_default: bool
+    target: Literal['mihomo', 'sing-box']
+    schema_version: str
+    format: Literal['yaml', 'json']
 
 
 class TemplateCreate(BaseModel):
     name: str = Field(min_length=1)
     content: str
     is_default: bool = False
+    target: Literal['mihomo', 'sing-box'] = 'mihomo'
+    schema_version: str = '1'
+    format: Literal['yaml', 'json'] = 'yaml'
+
+    @model_validator(mode='after')
+    def validate_target_metadata(self) -> 'TemplateCreate':
+        validate_template_metadata(self.target, self.schema_version, self.format)
+        return self
 
     @field_validator('name')
     @classmethod
@@ -157,6 +203,9 @@ class TemplateUpdate(BaseModel):
     name: str | None = None
     content: str | None = None
     is_default: bool | None = None
+    target: Literal['mihomo', 'sing-box'] | None = None
+    schema_version: str | None = None
+    format: Literal['yaml', 'json'] | None = None
 
     @field_validator('name')
     @classmethod
@@ -212,7 +261,7 @@ class TemplateSourceInput(BaseModel):
     id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode='after')
-    def validate_source(self) -> TemplateSourceInput:
+    def validate_source(self) -> 'TemplateSourceInput':
         has_kind = self.kind is not None
         has_id = self.id is not None
         if has_kind != has_id:
@@ -224,8 +273,22 @@ class TemplateSourceInput(BaseModel):
         return self
 
 
+class MergeProfileTargetInput(BaseModel):
+    compatibility_version: str
+    template_id: int = Field(ge=1)
+
+
+class MergeProfileTargetRead(ORMReadModel):
+    id: int
+    profile_id: int
+    target: Literal['sing-box']
+    compatibility_version: str
+    template_id: int
+
+
 class MergeProfileRead(BaseModel):
     id: int
+    public_id: str
     name: str
     enabled: bool
     template_source: TemplateSourceRead | None
@@ -270,6 +333,8 @@ __all__ = [
     'ConvertRequest',
     'MergeProfileCreate',
     'MergeProfileRead',
+    'MergeProfileTargetInput',
+    'MergeProfileTargetRead',
     'MergeProfileUpdate',
     'MergeRequest',
     'RuleSourceCreate',
@@ -287,4 +352,5 @@ __all__ = [
     'TemplateSummaryRead',
     'TemplateUpdate',
     'YamlPreviewRead',
+    'validate_template_metadata',
 ]

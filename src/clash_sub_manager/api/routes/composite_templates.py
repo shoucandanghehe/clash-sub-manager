@@ -1,7 +1,5 @@
 """CRUD endpoints for composed templates."""
 
-from __future__ import annotations
-
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -49,6 +47,11 @@ async def _get_template_or_404(db: AsyncSession, template_id: int) -> Template:
     template = await db.get(Template, template_id)
     if template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='template not found')
+    if template.target != 'mihomo':
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail='sing-box templates do not support patches or composites',
+        )
     return template
 
 
@@ -82,6 +85,11 @@ async def _render_cached_content(
     composite_template: CompositeTemplate,
     db: AsyncSession,
 ) -> tuple[str, list[TemplatePatch]]:
+    if composite_template.base_template.target != 'mihomo':
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail='sing-box templates do not support patches or composites',
+        )
     patches = await _get_patches_or_404(db, composite_template.patch_sequence)
     try:
         cached_content = TemplateComposer().render_cached_content(composite_template.base_template, patches)
@@ -92,7 +100,9 @@ async def _render_cached_content(
 
 @router.get('/composite-templates', response_model=list[CompositeTemplateRead])
 async def list_composite_templates(db: DbSession) -> list[CompositeTemplateRead]:
-    statement = select(CompositeTemplate).options(selectinload(CompositeTemplate.base_template)).order_by(CompositeTemplate.id)
+    statement = (
+        select(CompositeTemplate).options(selectinload(CompositeTemplate.base_template)).order_by(CompositeTemplate.id)
+    )
     composites = list((await db.scalars(statement)).all())
 
     changed = False
@@ -157,7 +167,9 @@ async def update_composite_template(
         if 'base_template_id' in payload.model_fields_set and payload.base_template_id is not None
         else composite.base_template_id
     )
-    patch_sequence = list(payload.patch_sequence) if payload.patch_sequence is not None else list(composite.patch_sequence)
+    patch_sequence = (
+        list(payload.patch_sequence) if payload.patch_sequence is not None else list(composite.patch_sequence)
+    )
 
     base_template = await _get_template_or_404(db, base_template_id)
     patches = await _get_patches_or_404(db, patch_sequence)

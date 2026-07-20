@@ -1,23 +1,22 @@
 """Strict subscription merging and deduplication."""
 
-from __future__ import annotations
-
 import asyncio
-from typing import TYPE_CHECKING
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 from ..models.clash import ClashConfig
+from ..models.proxy import ProxyNodeModel
+from ..models.subscription import SubscriptionConfig
 from ..parsers import ProxyParser
 from .converter import ClashConverter
 from .fetcher import SubscriptionFetcher
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from ..models.proxy import ProxyNodeModel
-    from ..models.subscription import SubscriptionConfig
-    from .template import TemplateProcessor
+from .template import TemplateProcessor
 
 
+@dataclass(frozen=True, slots=True)
+class NodeResolution:
+    nodes: list[ProxyNodeModel]
+    dropped_nodes: tuple[str, ...]
 
 
 class SubscriptionMerger:
@@ -26,15 +25,28 @@ class SubscriptionMerger:
     def __init__(self, configs: list[SubscriptionConfig]):
         self.configs = configs
 
-    async def merge(self, template: TemplateProcessor | None = None) -> dict[str, object]:
+    async def resolve(self) -> NodeResolution:
         enabled_configs = [config for config in self.configs if config.enabled]
         if not enabled_configs:
             msg = 'at least one enabled subscription is required'
             raise ValueError(msg)
         contents = await asyncio.gather(*(SubscriptionFetcher(config).fetch() for config in enabled_configs))
-        parsed_groups = [ProxyParser.parse_subscription(content) for content in contents]
-        deduped_nodes = self._deduplicate(node for group in parsed_groups for node in group)
-        proxies = ClashConverter.convert_many(deduped_nodes)
+        kept_nodes: list[ProxyNodeModel] = []
+        dropped_nodes: list[str] = []
+        for config, content in zip(enabled_configs, contents, strict=True):
+            excluded_names = set(config.excluded_node_names)
+            for node in ProxyParser.parse_subscription(content):
+                if node.name in excluded_names:
+                    dropped_nodes.append(node.name)
+                else:
+                    kept_nodes.append(node)
+        return NodeResolution(self._deduplicate(kept_nodes), tuple(dropped_nodes))
+
+    async def resolve_nodes(self) -> list[ProxyNodeModel]:
+        return (await self.resolve()).nodes
+
+    async def merge(self, template: TemplateProcessor | None = None) -> dict[str, object]:
+        proxies = ClashConverter.convert_many((await self.resolve()).nodes)
 
         if template is not None:
             return template.apply(proxies)
@@ -68,4 +80,4 @@ class SubscriptionMerger:
         return ('value', value)
 
 
-__all__ = ['SubscriptionMerger']
+__all__ = ['NodeResolution', 'SubscriptionMerger']

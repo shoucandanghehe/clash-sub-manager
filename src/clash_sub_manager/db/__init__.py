@@ -1,5 +1,5 @@
 from .base import Base
-from .models import MergeProfile, RuleSource, Subscription, Template, merge_profile_subscriptions
+from .models import MergeProfile, MergeProfileTarget, RuleSource, Subscription, Template, merge_profile_subscriptions
 from .models_patch import CompositeTemplate, TemplatePatch
 from .session import (
     APP_DATA_DIR_NAME,
@@ -19,6 +19,7 @@ __all__ = [
     'Base',
     'CompositeTemplate',
     'MergeProfile',
+    'MergeProfileTarget',
     'RuleSource',
     'Subscription',
     'Template',

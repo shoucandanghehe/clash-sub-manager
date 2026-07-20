@@ -1,10 +1,9 @@
 """SQLAlchemy ORM models for persisted subscriptions, templates, rules, merge profiles, and patch resources."""
 
-from __future__ import annotations
+from datetime import datetime
+from uuid import uuid4
 
-from datetime import datetime  # noqa: TC003
-
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Table, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Table, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -25,8 +24,12 @@ class Template(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True)
     content: Mapped[str] = mapped_column(Text())
     is_default: Mapped[bool] = mapped_column(Boolean(), default=False)
+    target: Mapped[str] = mapped_column(String(32), default='mihomo')
+    schema_version: Mapped[str] = mapped_column(String(32), default='1')
+    format: Mapped[str] = mapped_column(String(16), default='yaml')
 
-    merge_profiles: Mapped[list[MergeProfile]] = relationship(back_populates='template')
+    merge_profiles: Mapped[list['MergeProfile']] = relationship(back_populates='template')
+    target_bindings: Mapped[list['MergeProfileTarget']] = relationship(back_populates='template')
     composite_templates: Mapped[list[CompositeTemplate]] = relationship(back_populates='base_template')
 
 
@@ -43,8 +46,9 @@ class Subscription(Base):
     headers: Mapped[dict[str, str]] = mapped_column(JSON(), default=dict)
     follow_redirects: Mapped[bool] = mapped_column(Boolean(), default=True)
     enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
+    excluded_node_names: Mapped[list[str]] = mapped_column(JSON(), default=list)
 
-    merge_profiles: Mapped[list[MergeProfile]] = relationship(
+    merge_profiles: Mapped[list['MergeProfile']] = relationship(
         secondary=merge_profile_subscriptions,
         back_populates='subscriptions',
     )
@@ -65,6 +69,7 @@ class MergeProfile(Base):
     __tablename__ = 'merge_profiles'
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(36), unique=True, default=lambda: str(uuid4()))
     name: Mapped[str] = mapped_column(String(255), unique=True)
     template_id: Mapped[int | None] = mapped_column(ForeignKey('templates.id'), nullable=True)
     composite_template_id: Mapped[int | None] = mapped_column(ForeignKey('composite_templates.id'), nullable=True)
@@ -77,11 +82,30 @@ class MergeProfile(Base):
         back_populates='merge_profiles',
         order_by='Subscription.id',
     )
+    targets: Mapped[list['MergeProfileTarget']] = relationship(
+        back_populates='merge_profile',
+        cascade='all, delete-orphan',
+    )
+
+
+class MergeProfileTarget(Base):
+    __tablename__ = 'merge_profile_targets'
+    __table_args__ = (UniqueConstraint('profile_id', 'target', name='uq_merge_profile_targets_profile_target'),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey('merge_profiles.id', ondelete='CASCADE'))
+    target: Mapped[str] = mapped_column(String(32))
+    compatibility_version: Mapped[str] = mapped_column(String(32))
+    template_id: Mapped[int] = mapped_column(ForeignKey('templates.id'))
+
+    merge_profile: Mapped[MergeProfile] = relationship(back_populates='targets')
+    template: Mapped[Template] = relationship(back_populates='target_bindings')
 
 
 __all__ = [
     'CompositeTemplate',
     'MergeProfile',
+    'MergeProfileTarget',
     'RuleSource',
     'Subscription',
     'Template',
