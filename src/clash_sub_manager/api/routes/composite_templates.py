@@ -98,7 +98,7 @@ async def _render_cached_content(
     return cached_content, patches
 
 
-@router.get('/composite-templates', response_model=list[CompositeTemplateRead])
+@router.get('/composite-templates')
 async def list_composite_templates(db: DbSession) -> list[CompositeTemplateRead]:
     statement = (
         select(CompositeTemplate).options(selectinload(CompositeTemplate.base_template)).order_by(CompositeTemplate.id)
@@ -119,7 +119,7 @@ async def list_composite_templates(db: DbSession) -> list[CompositeTemplateRead]
     return serialized
 
 
-@router.post('/composite-templates', response_model=CompositeTemplateRead, status_code=status.HTTP_201_CREATED)
+@router.post('/composite-templates', status_code=status.HTTP_201_CREATED)
 async def create_composite_template(payload: CompositeTemplateCreate, db: DbSession) -> CompositeTemplateRead:
     base_template = await _get_template_or_404(db, payload.base_template_id)
     patches = await _get_patches_or_404(db, payload.patch_sequence)
@@ -142,7 +142,7 @@ async def create_composite_template(payload: CompositeTemplateCreate, db: DbSess
     return _serialize_composite_template(composite, patches)
 
 
-@router.get('/composite-templates/{composite_id}', response_model=CompositeTemplateRead)
+@router.get('/composite-templates/{composite_id}')
 async def get_composite_template(composite_id: int, db: DbSession) -> CompositeTemplateRead:
     composite = await _get_composite_template_or_404(composite_id, db)
     cached_content, patches = await _render_cached_content(composite, db)
@@ -153,7 +153,7 @@ async def get_composite_template(composite_id: int, db: DbSession) -> CompositeT
     return _serialize_composite_template(composite, patches)
 
 
-@router.put('/composite-templates/{composite_id}', response_model=CompositeTemplateRead)
+@router.put('/composite-templates/{composite_id}')
 async def update_composite_template(
     composite_id: int,
     payload: CompositeTemplateUpdate,
@@ -204,7 +204,7 @@ async def delete_composite_template(composite_id: int, db: DbSession) -> Respons
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post('/composite-templates/preview', response_model=CompositePreviewRead)
+@router.post('/composite-templates/preview')
 async def preview_composite_template(payload: CompositeTemplatePreviewRequest, db: DbSession) -> CompositePreviewRead:
     base_template = await _get_template_or_404(db, payload.base_template_id)
     patches = await _get_patches_or_404(db, payload.patch_sequence)

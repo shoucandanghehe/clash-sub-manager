@@ -105,7 +105,7 @@ async def delete_template_patch(patch_id: int, db: DbSession) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post('/template-patches/{patch_id}/preview', response_model=CompositePreviewRead)
+@router.post('/template-patches/{patch_id}/preview')
 async def preview_template_patch(
     patch_id: int,
     payload: TemplatePatchPreviewRequest,

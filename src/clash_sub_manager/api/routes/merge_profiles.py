@@ -278,7 +278,7 @@ async def _apply_template_source(
     merge_profile.template_id = None
 
 
-@router.get('/merge-profiles', response_model=list[MergeProfileRead])
+@router.get('/merge-profiles')
 async def list_merge_profiles(db: DbSession) -> list[MergeProfileRead]:
     statement = select(MergeProfile).options(
         selectinload(MergeProfile.template),
@@ -289,7 +289,7 @@ async def list_merge_profiles(db: DbSession) -> list[MergeProfileRead]:
     return [_serialize_merge_profile(merge_profile) for merge_profile in merge_profiles]
 
 
-@router.post('/merge-profiles', response_model=MergeProfileRead, status_code=status.HTTP_201_CREATED)
+@router.post('/merge-profiles', status_code=status.HTTP_201_CREATED)
 async def create_merge_profile(payload: MergeProfileCreate, db: DbSession) -> MergeProfileRead:
     subscriptions = await _get_subscriptions_or_404(db, payload.subscription_ids)
 
@@ -301,12 +301,12 @@ async def create_merge_profile(payload: MergeProfileCreate, db: DbSession) -> Me
     return _serialize_merge_profile(await _get_merge_profile_or_404(merge_profile.id, db))
 
 
-@router.get('/merge-profiles/{profile_id}', response_model=MergeProfileRead)
+@router.get('/merge-profiles/{profile_id}')
 async def get_merge_profile(profile_id: int, db: DbSession) -> MergeProfileRead:
     return _serialize_merge_profile(await _get_merge_profile_or_404(profile_id, db))
 
 
-@router.put('/merge-profiles/{profile_id}', response_model=MergeProfileRead)
+@router.put('/merge-profiles/{profile_id}')
 async def update_merge_profile(profile_id: int, payload: MergeProfileUpdate, db: DbSession) -> MergeProfileRead:
     merge_profile = await _get_merge_profile_or_404(profile_id, db)
 
@@ -539,7 +539,7 @@ async def delete_merge_profile(profile_id: int, db: DbSession) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post('/merge-profiles/{profile_id}/generate', response_model=YamlPreviewRead)
+@router.post('/merge-profiles/{profile_id}/generate')
 async def generate_merge_profile(profile_id: int, request: Request, db: DbSession) -> YamlPreviewRead:
     merge_profile = await _get_merge_profile_or_404(profile_id, db)
     content = await _render_merge_profile_content(merge_profile, request, db)
