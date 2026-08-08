@@ -114,6 +114,8 @@ async def _build_merge_profile_document(
     merge_profile: MergeProfile,
     request: Request,
     db: AsyncSession,
+    *,
+    refresh_remote: bool,
 ) -> dict[str, object]:
     template = None
     source_content = (
@@ -129,16 +131,21 @@ async def _build_merge_profile_document(
             yaml.safe_load(source_content),
             rule_provider_urls=rule_provider_urls,
         )
-    resolved_configs = await _resolve_merge_profile_configs(merge_profile, db)
+    resolved_configs = await _resolve_merge_profile_configs(merge_profile, db, refresh_remote=refresh_remote)
     return await SubscriptionMerger(resolved_configs).merge(template)
 
 
 async def _resolve_merge_profile_configs(
     merge_profile: MergeProfile,
     db: AsyncSession,
+    *,
+    refresh_remote: bool,
 ) -> list[SubscriptionConfig]:
     resolved_subscriptions = await asyncio.gather(
-        *(_resolve_subscription_config(subscription) for subscription in merge_profile.subscriptions)
+        *(
+            _resolve_subscription_config(subscription, refresh_remote=refresh_remote)
+            for subscription in merge_profile.subscriptions
+        )
     )
     configs = [config for config, _ in resolved_subscriptions]
 
@@ -159,9 +166,16 @@ async def _render_merge_profile_content(
     merge_profile: MergeProfile,
     request: Request,
     db: AsyncSession,
+    *,
+    refresh_remote: bool,
 ) -> str:
     try:
-        document = await _build_merge_profile_document(merge_profile, request, db)
+        document = await _build_merge_profile_document(
+            merge_profile,
+            request,
+            db,
+            refresh_remote=refresh_remote,
+        )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return TemplateComposer.render_document(document)
@@ -223,10 +237,16 @@ def _to_inline_subscription_config(config: SubscriptionConfig, content: str) -> 
     )
 
 
-async def _resolve_subscription_config(subscription: Subscription) -> tuple[SubscriptionConfig, str | None]:
+async def _resolve_subscription_config(
+    subscription: Subscription,
+    *,
+    refresh_remote: bool,
+) -> tuple[SubscriptionConfig, str | None]:
     config = _to_subscription_config(subscription)
     if not config.enabled or config.content is not None:
         return config, None
+    if not refresh_remote:
+        return _to_inline_subscription_config(config, subscription.cached_content or ''), None
 
     try:
         fetched_content = await SubscriptionFetcher(config).fetch()
@@ -441,7 +461,7 @@ async def _render_sing_box_profile(
     renderer = SingBox113Renderer()
     specs = renderer.required_rule_sources(binding.template.content)
     rule_source_contents = await _resolve_sing_box_rule_sources(specs, db)
-    configs = await _resolve_merge_profile_configs(merge_profile, db)
+    configs = await _resolve_merge_profile_configs(merge_profile, db, refresh_remote=False)
     resolution = await SubscriptionMerger(configs).resolve()
     result = renderer.render(
         binding.template.content,
@@ -528,7 +548,7 @@ async def get_merge_profile_config(profile_name: str, request: Request, db: DbSe
     merge_profile = (await db.scalars(statement)).one_or_none()
     if merge_profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='merge profile not found')
-    content = await _render_merge_profile_content(merge_profile, request, db)
+    content = await _render_merge_profile_content(merge_profile, request, db, refresh_remote=False)
     return Response(content=content, media_type='application/yaml')
 
 
@@ -544,5 +564,5 @@ async def delete_merge_profile(profile_id: int, db: DbSession) -> Response:
 @router.post('/merge-profiles/{profile_id}/generate')
 async def generate_merge_profile(profile_id: int, request: Request, db: DbSession) -> YamlPreviewRead:
     merge_profile = await _get_merge_profile_or_404(profile_id, db)
-    content = await _render_merge_profile_content(merge_profile, request, db)
+    content = await _render_merge_profile_content(merge_profile, request, db, refresh_remote=True)
     return YamlPreviewRead(content=content)

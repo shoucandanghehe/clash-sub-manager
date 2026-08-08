@@ -524,6 +524,61 @@ def test_sing_box_target_returns_valid_complete_json(sing_box_client: TestClient
     assert rule_set_response.json() == {'version': 4, 'rules': [{'domain_suffix': ['example.com']}]}
 
 
+def test_sing_box_client_pull_uses_cached_subscription(
+    sing_box_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_fetch(self: SubscriptionFetcher) -> str:
+        nonlocal calls
+        if self.config.content is not None:
+            return self.config.content
+        calls += 1
+        return 'trojan://secret@example.com:443#Cached'
+
+    monkeypatch.setattr(SubscriptionFetcher, 'fetch', fake_fetch)
+    subscription = sing_box_client.post(
+        '/subscriptions',
+        json={'name': 'remote-sing-box', 'url': 'https://example.com/sub'},
+    ).json()
+    refresh_response = sing_box_client.post(f'/subscriptions/{subscription["id"]}/update')
+    assert refresh_response.status_code == 200
+    assert calls == 1
+
+    template = sing_box_client.post(
+        '/templates',
+        json={
+            'name': 'cached-sing-box-template',
+            'content': json.dumps(_minimal_sing_box_template()),
+            'target': 'sing-box',
+            'schema_version': '1.13',
+            'format': 'json',
+        },
+    ).json()
+    profile = sing_box_client.post(
+        '/merge-profiles',
+        json={'name': 'cached-sing-box-profile', 'subscription_ids': [subscription['id']]},
+    ).json()
+    binding_response = sing_box_client.put(
+        f'/merge-profiles/{profile["id"]}/targets/sing-box',
+        json={'compatibility_version': '1.13.14', 'template_id': template['id']},
+    )
+    assert binding_response.status_code == 200
+
+    config_response = sing_box_client.get(
+        f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json',
+        params={'compat': '1.13.14'},
+    )
+
+    assert config_response.status_code == 200
+    node_outbounds = [
+        outbound for outbound in config_response.json()['outbounds'] if outbound['type'] not in {'selector', 'direct'}
+    ]
+    assert [outbound['tag'] for outbound in node_outbounds] == ['Cached']
+    assert calls == 1
+
+
 def test_exact_subscription_node_exclusions_apply_to_both_targets(sing_box_client: TestClient) -> None:
     subscription = sing_box_client.post(
         '/subscriptions',
@@ -827,6 +882,12 @@ def test_merge_profile_uses_cached_subscription_when_remote_refresh_fails(
     assert first_generate.status_code == 200
     first_rendered = yaml.safe_load(first_generate.json()['content'])
     assert [proxy['name'] for proxy in first_rendered['proxies']] == ['Cached']
+
+    client_pull = client.get('/merge-profiles/by-name/cached-profile/config')
+    assert client_pull.status_code == 200
+    pulled = yaml.safe_load(client_pull.text)
+    assert [proxy['name'] for proxy in pulled['proxies']] == ['Cached']
+    assert calls == 1
 
     try:
         second_generate = client.post(f'/merge-profiles/{profile_id}/generate')
