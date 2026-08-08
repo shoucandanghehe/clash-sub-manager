@@ -132,7 +132,7 @@ async def _build_merge_profile_document(
             rule_provider_urls=rule_provider_urls,
         )
     resolved_configs = await _resolve_merge_profile_configs(merge_profile, db, refresh_remote=refresh_remote)
-    return await SubscriptionMerger(resolved_configs).merge(template)
+    return await SubscriptionMerger(resolved_configs, allow_empty=not refresh_remote).merge(template)
 
 
 async def _resolve_merge_profile_configs(
@@ -246,7 +246,10 @@ async def _resolve_subscription_config(
     if not config.enabled or config.content is not None:
         return config, None
     if not refresh_remote:
-        return _to_inline_subscription_config(config, subscription.cached_content or ''), None
+        cached_content = subscription.cached_content
+        if cached_content is None or not cached_content.strip():
+            return config.model_copy(update={'enabled': False}), None
+        return _to_inline_subscription_config(config, cached_content), None
 
     try:
         fetched_content = await SubscriptionFetcher(config).fetch()
@@ -462,7 +465,7 @@ async def _render_sing_box_profile(
     specs = renderer.required_rule_sources(binding.template.content)
     rule_source_contents = await _resolve_sing_box_rule_sources(specs, db)
     configs = await _resolve_merge_profile_configs(merge_profile, db, refresh_remote=False)
-    resolution = await SubscriptionMerger(configs).resolve()
+    resolution = await SubscriptionMerger(configs, allow_empty=True).resolve()
     result = renderer.render(
         binding.template.content,
         resolution.nodes,

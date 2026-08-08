@@ -20,13 +20,16 @@ class NodeResolution:
 
 
 class SubscriptionMerger:
-    """Merge multiple subscriptions with strict failure semantics."""
+    """Merge subscription sources with strict failures unless empty input is explicitly allowed."""
 
-    def __init__(self, configs: list[SubscriptionConfig]):
+    def __init__(self, configs: list[SubscriptionConfig], *, allow_empty: bool = False):
         self.configs = configs
+        self.allow_empty = allow_empty
 
     async def resolve(self) -> NodeResolution:
         enabled_configs = [config for config in self.configs if config.enabled]
+        if not enabled_configs and self.allow_empty:
+            return NodeResolution([], ())
         if not enabled_configs:
             msg = 'at least one enabled subscription is required'
             raise ValueError(msg)

@@ -546,6 +546,11 @@ def test_sing_box_client_pull_uses_cached_subscription(
     assert refresh_response.status_code == 200
     assert calls == 1
 
+    empty_subscription = sing_box_client.post(
+        '/subscriptions',
+        json={'name': 'empty-remote-sing-box', 'url': 'https://example.com/empty'},
+    ).json()
+
     template = sing_box_client.post(
         '/templates',
         json={
@@ -558,7 +563,10 @@ def test_sing_box_client_pull_uses_cached_subscription(
     ).json()
     profile = sing_box_client.post(
         '/merge-profiles',
-        json={'name': 'cached-sing-box-profile', 'subscription_ids': [subscription['id']]},
+        json={
+            'name': 'cached-sing-box-profile',
+            'subscription_ids': [subscription['id'], empty_subscription['id']],
+        },
     ).json()
     binding_response = sing_box_client.put(
         f'/merge-profiles/{profile["id"]}/targets/sing-box',
@@ -898,6 +906,32 @@ def test_merge_profile_uses_cached_subscription_when_remote_refresh_fails(
     second_rendered = yaml.safe_load(second_generate.json()['content'])
     assert [proxy['name'] for proxy in second_rendered['proxies']] == ['Cached']
     assert calls == 2
+
+
+def test_client_pull_ignores_remote_subscription_without_cache(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_fetch(self: SubscriptionFetcher) -> str:
+        pytest.fail(f'unexpected remote fetch for {self.config.name!r}')
+
+    monkeypatch.setattr(SubscriptionFetcher, 'fetch', fail_fetch)
+    subscription = client.post(
+        '/subscriptions',
+        json={'name': 'empty-remote', 'url': 'https://example.com/sub'},
+    ).json()
+    profile_response = client.post(
+        '/merge-profiles',
+        json={'name': 'empty-cache-profile', 'subscription_ids': [subscription['id']]},
+    )
+    assert profile_response.status_code == 201
+
+    response = client.get('/merge-profiles/by-name/empty-cache-profile/config')
+
+    assert response.status_code == 200
+    rendered = yaml.safe_load(response.text)
+    assert rendered['proxies'] == []
+    assert rendered['proxy-groups'][0]['proxies'] == ['DIRECT']
 
 
 def test_merge_profile_uses_cached_subscription_when_remote_refresh_is_empty(
