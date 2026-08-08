@@ -94,8 +94,8 @@ export interface MergeProfileRecord {
 
 export interface SubscriptionPayload {
   name: string
-  url?: string
-  content?: string
+  url?: string | null
+  content?: string | null
   proxy?: string | null
   headers?: Record<string, string>
   follow_redirects?: boolean

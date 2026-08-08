@@ -177,17 +177,13 @@ function openEditDialog(subscription: SubscriptionRecord): void {
 async function saveSubscription(): Promise<void> {
   const payload: SubscriptionPayload = {
     name: form.name.trim(),
+    url: sourceMode.value === 'url' ? form.source.trim() : null,
+    content: sourceMode.value === 'content' ? form.source.trim() : null,
     proxy: form.proxy.trim() ? form.proxy.trim() : null,
     headers: normalizedHeaders.value.values,
     follow_redirects: form.followRedirects,
     timeout_seconds: form.timeoutSeconds,
     enabled: form.enabled,
-  }
-
-  if (sourceMode.value === 'content') {
-    payload.content = form.source.trim()
-  } else {
-    payload.url = form.source.trim()
   }
 
   const succeeded = editingId.value === null
