@@ -48,6 +48,7 @@ async def create_subscription(payload: SubscriptionCreate, db: DbSession) -> Sub
         proxy=payload.proxy,
         headers=payload.headers,
         follow_redirects=payload.follow_redirects,
+        timeout_seconds=payload.timeout_seconds,
         enabled=payload.enabled,
         excluded_node_names=payload.excluded_node_names,
     )
@@ -78,6 +79,7 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
         'proxy': subscription.proxy,
         'headers': subscription.headers,
         'follow_redirects': subscription.follow_redirects,
+        'timeout_seconds': subscription.timeout_seconds,
         'enabled': subscription.enabled,
         'excluded_node_names': subscription.excluded_node_names,
     }
@@ -94,6 +96,7 @@ async def update_subscription(subscription_id: int, payload: SubscriptionUpdate,
             'proxy': merged['proxy'],
             'headers': merged['headers'],
             'follow_redirects': merged['follow_redirects'],
+            'timeout_seconds': merged['timeout_seconds'],
             'enabled': merged['enabled'],
             'excluded_node_names': merged['excluded_node_names'],
         }
@@ -131,6 +134,7 @@ async def refresh_subscription(subscription_id: int, db: DbSession) -> Subscript
             'proxy': subscription.proxy,
             'headers': subscription.headers,
             'follow_redirects': subscription.follow_redirects,
+            'timeout_seconds': subscription.timeout_seconds,
             'enabled': subscription.enabled,
         }
     )

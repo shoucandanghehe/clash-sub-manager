@@ -138,6 +138,7 @@ def test_subscription_crud_endpoints(client: TestClient) -> None:
     )
     assert create_response.status_code == 201
     created = create_response.json()
+    assert created['timeout_seconds'] == 5.0
 
     list_response = client.get('/subscriptions')
     assert list_response.status_code == 200
@@ -145,10 +146,18 @@ def test_subscription_crud_endpoints(client: TestClient) -> None:
 
     update_response = client.put(
         f'/subscriptions/{created["id"]}',
-        json={'enabled': False},
+        json={'enabled': False, 'timeout_seconds': 12.5},
     )
     assert update_response.status_code == 200
     assert update_response.json()['enabled'] is False
+    assert update_response.json()['timeout_seconds'] == 12.5
+
+    invalid_timeout_response = client.put(
+        f'/subscriptions/{created["id"]}',
+        json={'timeout_seconds': 0},
+    )
+    assert invalid_timeout_response.status_code == 422
+    assert client.get(f'/subscriptions/{created["id"]}').json()['timeout_seconds'] == 12.5
 
     delete_response = client.delete(f'/subscriptions/{created["id"]}')
     assert delete_response.status_code == 204

@@ -18,6 +18,7 @@ interface SubscriptionForm {
   source: string
   proxy: string
   followRedirects: boolean
+  timeoutSeconds: number
   enabled: boolean
   headers: HeaderRow[]
 }
@@ -35,6 +36,7 @@ const form = reactive<SubscriptionForm>({
   source: '',
   proxy: '',
   followRedirects: true,
+  timeoutSeconds: 5,
   enabled: true,
   headers: [],
 })
@@ -94,8 +96,15 @@ const normalizedHeaders = computed(() => {
   }
 })
 
+const timeoutError = computed(() => {
+  return Number.isFinite(form.timeoutSeconds) && form.timeoutSeconds > 0 ? '' : '超时必须是大于 0 的秒数。'
+})
+
 const canSubmit = computed(() => {
-  return form.name.trim().length > 0 && form.source.trim().length > 0 && normalizedHeaders.value.valid
+  return form.name.trim().length > 0
+    && form.source.trim().length > 0
+    && normalizedHeaders.value.valid
+    && !timeoutError.value
 })
 
 function formatLastUpdated(value: string | null): string {
@@ -134,6 +143,7 @@ function resetForm(): void {
   form.source = ''
   form.proxy = ''
   form.followRedirects = true
+  form.timeoutSeconds = 5
   form.enabled = true
   form.headers = []
 }
@@ -158,6 +168,7 @@ function openEditDialog(subscription: SubscriptionRecord): void {
   form.source = subscription.url ?? subscription.content ?? ''
   form.proxy = subscription.proxy ?? ''
   form.followRedirects = subscription.follow_redirects
+  form.timeoutSeconds = subscription.timeout_seconds
   form.enabled = subscription.enabled
   form.headers = Object.entries(subscription.headers).map(([name, value]) => createHeaderRow(name, value))
   dialog.value = true
@@ -169,6 +180,7 @@ async function saveSubscription(): Promise<void> {
     proxy: form.proxy.trim() ? form.proxy.trim() : null,
     headers: normalizedHeaders.value.values,
     follow_redirects: form.followRedirects,
+    timeout_seconds: form.timeoutSeconds,
     enabled: form.enabled,
   }
 
@@ -282,13 +294,22 @@ async function saveSubscription(): Promise<void> {
           <v-col cols="12">
             <v-textarea v-model="form.source" :label="sourceLabel" rows="8" />
           </v-col>
-          <v-col cols="12" md="6">
+          <v-col cols="12" md="5">
             <v-text-field v-model="form.proxy" label="代理 URL（可选）" placeholder="http://127.0.0.1:7890" />
           </v-col>
           <v-col cols="12" md="3">
+            <v-text-field
+              v-model.number="form.timeoutSeconds"
+              label="请求超时（秒）"
+              type="number"
+              step="0.1"
+              :error-messages="timeoutError"
+            />
+          </v-col>
+          <v-col cols="12" md="2">
             <v-switch v-model="form.followRedirects" label="跟随重定向" hide-details />
           </v-col>
-          <v-col cols="12" md="3">
+          <v-col cols="12" md="2">
             <v-switch v-model="form.enabled" label="启用" hide-details />
           </v-col>
           <v-col cols="12">

@@ -60,6 +60,7 @@ class SubscriptionSourceInput(BaseModel):
     proxy: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     follow_redirects: bool = True
+    timeout_seconds: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     excluded_node_names: list[str] = Field(default_factory=list)
 
     @field_validator('excluded_node_names')
@@ -84,6 +85,7 @@ class SubscriptionSourceInput(BaseModel):
             proxy=self.proxy,
             headers=self.headers,
             follow_redirects=self.follow_redirects,
+            timeout_seconds=self.timeout_seconds,
             excluded_node_names=self.excluded_node_names,
         )
 
@@ -123,6 +125,7 @@ class SubscriptionRead(ORMReadModel):
     proxy: str | None
     headers: dict[str, str]
     follow_redirects: bool
+    timeout_seconds: float
     enabled: bool
     excluded_node_names: list[str]
     last_updated_at: dt.datetime | None
@@ -145,6 +148,7 @@ class SubscriptionUpdate(BaseModel):
     proxy: str | None = None
     headers: dict[str, str] | None = None
     follow_redirects: bool | None = None
+    timeout_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     enabled: bool | None = None
     excluded_node_names: list[str] | None = None
 

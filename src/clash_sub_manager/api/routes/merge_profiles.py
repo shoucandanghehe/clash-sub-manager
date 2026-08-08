@@ -200,6 +200,7 @@ def _to_subscription_config(subscription: Subscription) -> SubscriptionConfig:
             'proxy': subscription.proxy,
             'headers': subscription.headers,
             'follow_redirects': subscription.follow_redirects,
+            'timeout_seconds': subscription.timeout_seconds,
             'enabled': subscription.enabled,
             'excluded_node_names': subscription.excluded_node_names,
         }
@@ -216,6 +217,7 @@ def _to_inline_subscription_config(config: SubscriptionConfig, content: str) -> 
         proxy=config.proxy,
         headers=config.headers,
         follow_redirects=config.follow_redirects,
+        timeout_seconds=config.timeout_seconds,
         enabled=config.enabled,
         excluded_node_names=config.excluded_node_names,
     )

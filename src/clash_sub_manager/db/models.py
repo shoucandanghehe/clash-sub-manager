@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, String, Table, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, String, Table, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -45,6 +45,7 @@ class Subscription(Base):
     proxy: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     headers: Mapped[dict[str, str]] = mapped_column(JSON(), default=dict)
     follow_redirects: Mapped[bool] = mapped_column(Boolean(), default=True)
+    timeout_seconds: Mapped[float] = mapped_column(Float(), default=5.0)
     enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
     excluded_node_names: Mapped[list[str]] = mapped_column(JSON(), default=list)
 

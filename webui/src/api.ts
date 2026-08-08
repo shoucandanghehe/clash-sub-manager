@@ -6,6 +6,7 @@ export interface SubscriptionRecord {
   proxy: string | null
   headers: Record<string, string>
   follow_redirects: boolean
+  timeout_seconds: number
   enabled: boolean
   excluded_node_names: string[]
   last_updated_at: string | null
@@ -98,6 +99,7 @@ export interface SubscriptionPayload {
   proxy?: string | null
   headers?: Record<string, string>
   follow_redirects?: boolean
+  timeout_seconds?: number
   enabled?: boolean
   excluded_node_names?: string[]
 }
@@ -151,6 +153,7 @@ export interface MergePayload {
     proxy?: string | null
     headers?: Record<string, string>
     follow_redirects?: boolean
+    timeout_seconds?: number
   }>
   template?: Record<string, unknown>
 }

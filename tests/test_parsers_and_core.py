@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import http.server
 import json
-from typing import cast
+import threading
+import time
+from typing import TYPE_CHECKING, cast
 
 import pytest
+from typing_extensions import override
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from clash_sub_manager.core import (
     ClashConverter,
@@ -23,6 +31,35 @@ from clash_sub_manager.parsers import ClashParser, ProxyParser
 
 def _b64(value: str) -> str:
     return base64.urlsafe_b64encode(value.encode('utf-8')).decode('utf-8').rstrip('=')
+
+
+@pytest.fixture
+def slow_subscription_url() -> Iterator[str]:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            time.sleep(0.2)
+            content = b'trojan://secret@example.com:443#Timeout'
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(content)))
+            self.end_headers()
+            with contextlib.suppress(BrokenPipeError):
+                self.wfile.write(content)
+
+        @override
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host = str(server.server_address[0])
+        port = int(server.server_address[1])
+        yield f'http://{host}:{port}/subscription'
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_parse_shadowsocks_sip002_link() -> None:
@@ -330,6 +367,21 @@ def test_template_processor_rewrites_rule_provider_urls() -> None:
     providers = cast('dict[str, dict[str, object]]', rendered['rule-providers'])
 
     assert providers['applications']['url'] == 'http://testserver/rule-providers/1'
+
+
+@pytest.mark.asyncio
+async def test_subscription_fetcher_uses_each_subscription_timeout(slow_subscription_url: str) -> None:
+    short_timeout = SubscriptionConfig.model_validate(
+        {'name': 'short', 'url': slow_subscription_url, 'timeout_seconds': 0.05}
+    )
+    long_timeout = SubscriptionConfig.model_validate(
+        {'name': 'long', 'url': slow_subscription_url, 'timeout_seconds': 1.0}
+    )
+
+    with pytest.raises(SubscriptionFetchError):
+        await SubscriptionFetcher(short_timeout).fetch()
+
+    assert await SubscriptionFetcher(long_timeout).fetch() == 'trojan://secret@example.com:443#Timeout'
 
 
 @pytest.mark.asyncio

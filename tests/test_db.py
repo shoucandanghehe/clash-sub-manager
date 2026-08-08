@@ -156,11 +156,13 @@ async def test_init_db_rebuilds_legacy_subscriptions_table(tmp_path: pathlib.Pat
 
         async with engine.begin() as connection:
 
-            def read_subscription_columns(sync_connection: Connection) -> tuple[list[str], tuple[str, str]]:
+            def read_subscription_columns(sync_connection: Connection) -> tuple[list[str], tuple[str, str, float]]:
                 inspector = inspect(sync_connection)
                 columns = [column['name'] for column in inspector.get_columns('subscriptions')]
-                row = sync_connection.exec_driver_sql('SELECT name, headers FROM subscriptions WHERE id = 1').one()
-                return columns, (str(row[0]), str(row[1]))
+                row = sync_connection.exec_driver_sql(
+                    'SELECT name, headers, timeout_seconds FROM subscriptions WHERE id = 1'
+                ).one()
+                return columns, (str(row[0]), str(row[1]), float(row[2]))
 
             columns, stored_subscription = await connection.run_sync(read_subscription_columns)
 
@@ -168,8 +170,10 @@ async def test_init_db_rebuilds_legacy_subscriptions_table(tmp_path: pathlib.Pat
         assert 'cached_content' in columns
         assert 'last_updated_at' in columns
         assert 'excluded_node_names' in columns
+        assert 'timeout_seconds' in columns
         assert stored_subscription[0] == 'legacy'
         assert json.loads(stored_subscription[1]) == {'User-Agent': 'legacy'}
+        assert stored_subscription[2] == 5.0
     finally:
         await engine.dispose()
 
@@ -223,6 +227,7 @@ async def test_init_db_adds_update_tracking_columns_to_existing_tables(tmp_path:
         assert 'cached_content' in subscription_columns
         assert 'last_updated_at' in subscription_columns
         assert 'excluded_node_names' in subscription_columns
+        assert 'timeout_seconds' in subscription_columns
         assert 'last_updated_at' in rule_source_columns
     finally:
         await engine.dispose()

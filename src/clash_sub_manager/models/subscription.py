@@ -18,6 +18,7 @@ class SubscriptionConfig(BaseModel):
     proxy: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     follow_redirects: bool = True
+    timeout_seconds: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     enabled: bool = True
     excluded_node_names: list[str] = Field(default_factory=list)
 

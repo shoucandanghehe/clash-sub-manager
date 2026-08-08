@@ -102,10 +102,15 @@ def _ensure_subscription_columns(sync_connection: Connection) -> None:
         sync_connection.exec_driver_sql('ALTER TABLE subscriptions ADD COLUMN cached_content TEXT')
     if 'last_updated_at' not in columns:
         sync_connection.exec_driver_sql('ALTER TABLE subscriptions ADD COLUMN last_updated_at DATETIME')
+    if 'timeout_seconds' not in columns:
+        sync_connection.exec_driver_sql(
+            'ALTER TABLE subscriptions ADD COLUMN timeout_seconds FLOAT NOT NULL DEFAULT 5.0'
+        )
     if 'excluded_node_names' not in columns:
         sync_connection.exec_driver_sql(
             "ALTER TABLE subscriptions ADD COLUMN excluded_node_names JSON NOT NULL DEFAULT '[]'"
         )
+    sync_connection.exec_driver_sql('UPDATE subscriptions SET timeout_seconds = 5.0 WHERE timeout_seconds IS NULL')
     sync_connection.exec_driver_sql(
         "UPDATE subscriptions SET excluded_node_names = '[]' WHERE excluded_node_names IS NULL"
     )

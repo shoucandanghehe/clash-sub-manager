@@ -32,6 +32,7 @@ class SubscriptionFetcher:
                 proxy=self.config.proxy,
                 follow_redirects=self.config.follow_redirects,
                 headers=self.config.headers,
+                timeout=self.config.timeout_seconds,
             ) as client:
                 response = await client.get(str(self.config.url))
                 response.raise_for_status()

@@ -377,6 +377,7 @@ export const useManagerStore = defineStore('manager', () => {
             proxy: subscription.proxy,
             headers: subscription.headers,
             follow_redirects: subscription.follow_redirects,
+            timeout_seconds: subscription.timeout_seconds,
             enabled: subscription.enabled,
             excluded_node_names: subscription.excluded_node_names,
           })),
