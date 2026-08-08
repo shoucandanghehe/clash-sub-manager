@@ -20,7 +20,9 @@ DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 @router.post('/merge', response_model=YamlPreviewRead)
 async def merge_subscriptions(payload: MergeRequest, request: Request, db: DbSession) -> YamlPreviewRead:
-    subscriptions = [config.to_subscription_config(f'merge-{index}') for index, config in enumerate(payload.configs, start=1)]
+    subscriptions = [
+        config.to_subscription_config(f'merge-{index}') for index, config in enumerate(payload.configs, start=1)
+    ]
     template = None
     if payload.template is not None:
         rule_provider_urls = await build_cached_rule_provider_urls(db, request)

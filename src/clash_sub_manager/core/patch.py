@@ -134,7 +134,9 @@ class PatchEngine:
             target.append(self._require_value(operation, operation_index=operation_index))
             return
         if op == 'list_insert':
-            index = self._require_list_index(operation.get('index'), target, operation_index=operation_index, allow_end=True)
+            index = self._require_list_index(
+                operation.get('index'), target, operation_index=operation_index, allow_end=True
+            )
             target.insert(index, self._require_value(operation, operation_index=operation_index))
             return
         if op == 'list_remove':
@@ -150,7 +152,9 @@ class PatchEngine:
         *,
         operation_index: int,
     ) -> None:
-        index = self._require_list_index(operation.get('index'), target, operation_index=operation_index, allow_end=False)
+        index = self._require_list_index(
+            operation.get('index'), target, operation_index=operation_index, allow_end=False
+        )
         old_value = operation.get('old_value', _MISSING_VALUE)
         if old_value is not _MISSING_VALUE and target[index] != old_value:
             msg = f'operation {operation_index} old_value mismatch at path {path!r}'
@@ -165,7 +169,9 @@ class PatchEngine:
         *,
         operation_index: int,
     ) -> None:
-        index = self._require_list_index(operation.get('index'), target, operation_index=operation_index, allow_end=False)
+        index = self._require_list_index(
+            operation.get('index'), target, operation_index=operation_index, allow_end=False
+        )
         old_value = operation.get('old_value', _MISSING_VALUE)
         if old_value is not _MISSING_VALUE and target[index] != old_value:
             msg = f'operation {operation_index} old_value mismatch at path {path!r}'

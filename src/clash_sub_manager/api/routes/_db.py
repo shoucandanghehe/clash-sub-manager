@@ -13,9 +13,7 @@ if TYPE_CHECKING:
 
 def _is_unique_name_violation(exc: IntegrityError, *, table_name: str) -> bool:
     message = str(exc.orig).lower()
-    return 'unique' in message and (
-        f'{table_name}.name' in message or f'uq_{table_name}_name' in message
-    )
+    return 'unique' in message and (f'{table_name}.name' in message or f'uq_{table_name}_name' in message)
 
 
 async def commit_or_name_conflict(db: AsyncSession, *, resource_name: str, table_name: str) -> None:

@@ -42,7 +42,7 @@ class VMessParser(ShareLinkParser):
         grpc_service_name = str(data.get('serviceName', '') or data.get('path', '') or '').strip() or None
 
         return VMessNode(
-            name=str(data.get('ps', '') or f"{data['add']}:{data['port']}"),
+            name=str(data.get('ps', '') or f'{data["add"]}:{data["port"]}'),
             server=str(data['add']),
             port=int(str(data['port'])),
             uuid=str(data['id']),
