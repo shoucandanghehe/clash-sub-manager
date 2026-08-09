@@ -16,7 +16,7 @@ from typing import Literal, NoReturn, cast
 
 import yaml
 
-from ..models.proxy import AnyTLSNode, ProxyNodeModel, ShadowsocksNode, TrojanNode
+from ..models.proxy import AnyTLSNode, Hysteria2Node, ProxyNodeModel, ShadowsocksNode, TrojanNode
 
 SING_BOX_COMPATIBILITY_VERSION = '1.13.14'
 SING_BOX_SCHEMA_VERSION = '1.13'
@@ -24,6 +24,7 @@ RULE_SET_VERSION = 4
 _RULE_BEHAVIORS = frozenset({'classical', 'domain', 'ipcidr'})
 _RULE_FIELDS = ('domain', 'domain_suffix', 'domain_keyword', 'ip_cidr', 'process_name')
 _MIN_CLASSICAL_RULE_PARTS = 2
+_MAX_PORT = 65535
 
 
 class SingBoxRenderError(ValueError):
@@ -269,22 +270,25 @@ class SingBox113Renderer:
             if node.name in seen_tags:
                 _raise_render_error(f'duplicate outbound tag: {node.name}')
             seen_tags.add(node.name)
-            if isinstance(node, ShadowsocksNode):
-                outbound = SingBox113Renderer._convert_shadowsocks(node)
-            elif isinstance(node, TrojanNode):
-                outbound, warning = SingBox113Renderer._convert_trojan(node)
-                if warning is not None:
-                    warnings.append(warning)
-            elif isinstance(node, AnyTLSNode):
-                outbound, warning = SingBox113Renderer._convert_anytls(node)
-                if warning is not None:
-                    warnings.append(warning)
-            else:
-                _raise_render_error(f'unsupported sing-box proxy node type: {node.type}')
+            outbound, warning = SingBox113Renderer._convert_node(node)
+            if warning is not None:
+                warnings.append(warning)
             outbounds.append(outbound)
         if not outbounds:
             _raise_render_error('at least one proxy node is required')
         return outbounds, warnings
+
+    @staticmethod
+    def _convert_node(node: ProxyNodeModel) -> tuple[dict[str, object], str | None]:
+        if isinstance(node, ShadowsocksNode):
+            return SingBox113Renderer._convert_shadowsocks(node), None
+        if isinstance(node, TrojanNode):
+            return SingBox113Renderer._convert_trojan(node)
+        if isinstance(node, AnyTLSNode):
+            return SingBox113Renderer._convert_anytls(node)
+        if isinstance(node, Hysteria2Node):
+            return SingBox113Renderer._convert_hysteria2(node)
+        _raise_render_error(f'unsupported sing-box proxy node type: {node.type}')
 
     @staticmethod
     def _convert_shadowsocks(node: ShadowsocksNode) -> dict[str, object]:
@@ -375,6 +379,135 @@ class SingBox113Renderer:
         if node.tfo:
             outbound['tcp_fast_open'] = True
         return outbound, warning
+
+    @staticmethod
+    def _convert_hysteria2(node: Hysteria2Node) -> tuple[dict[str, object], str | None]:
+        SingBox113Renderer._reject_hysteria2_unsupported_options(node)
+        tls, warning = SingBox113Renderer._hysteria2_tls(node)
+        outbound: dict[str, object] = {
+            'type': 'hysteria2',
+            'tag': node.name,
+            'server': node.server,
+            'password': node.password,
+            'tls': tls,
+        }
+        if node.ports is None:
+            outbound['server_port'] = node.port
+        else:
+            outbound['server_ports'] = SingBox113Renderer._hysteria2_server_ports(node.ports)
+        if node.hop_interval is not None:
+            outbound['hop_interval'] = SingBox113Renderer._hysteria2_duration(node.hop_interval)
+        if node.up is not None:
+            outbound['up_mbps'] = SingBox113Renderer._hysteria2_mbps(node.up, 'up')
+        if node.down is not None:
+            outbound['down_mbps'] = SingBox113Renderer._hysteria2_mbps(node.down, 'down')
+        if node.obfs is not None:
+            if node.obfs_password is None:
+                _raise_render_error(f'hysteria2 node {node.name!r} enables obfs without a password')
+            outbound['obfs'] = {'type': node.obfs, 'password': node.obfs_password}
+        elif node.obfs_password is not None:
+            _raise_render_error(f'hysteria2 node {node.name!r} has an obfs password without an obfs type')
+        if not node.udp:
+            outbound['network'] = 'tcp'
+        return outbound, warning
+
+    @staticmethod
+    def _reject_hysteria2_unsupported_options(node: Hysteria2Node) -> None:
+        has_quic_receive_windows = (
+            node.initial_stream_receive_window is not None
+            or node.max_stream_receive_window is not None
+            or node.initial_connection_receive_window is not None
+            or node.max_connection_receive_window is not None
+        )
+        unsupported_obfs = node.obfs is not None and node.obfs != 'salamander'
+        if (
+            node.bbr_profile is None
+            and node.fingerprint is None
+            and node.name_cert_verify is None
+            and not unsupported_obfs
+            and node.obfs_max_packet_size is None
+            and node.obfs_min_packet_size is None
+            and not has_quic_receive_windows
+            and node.realm_opts is None
+        ):
+            return
+
+        options: list[str] = []
+        if node.bbr_profile is not None:
+            options.append('bbr-profile')
+        if node.fingerprint is not None:
+            options.append('fingerprint')
+        if node.name_cert_verify is not None:
+            options.append('name-cert-verify')
+        if unsupported_obfs:
+            options.append(f'obfs={node.obfs}')
+        if node.obfs_max_packet_size is not None:
+            options.append('obfs-max-packet-size')
+        if node.obfs_min_packet_size is not None:
+            options.append('obfs-min-packet-size')
+        if has_quic_receive_windows:
+            options.append('QUIC receive windows')
+        if node.realm_opts is not None:
+            options.append('realm-opts')
+        _raise_render_error(
+            f'hysteria2 node {node.name!r} uses options unsupported by sing-box 1.13: {", ".join(options)}'
+        )
+
+    @staticmethod
+    def _hysteria2_tls(node: Hysteria2Node) -> tuple[dict[str, object], str | None]:
+        tls: dict[str, object] = {'enabled': True}
+        if node.sni is not None:
+            tls['server_name'] = node.sni
+        if node.alpn is not None:
+            tls['alpn'] = node.alpn
+        warning = None
+        if node.skip_cert_verify:
+            tls['insecure'] = True
+            warning = f'hysteria2 node {node.name!r} enables tls.insecure'
+        if node.ech_config is not None:
+            tls['ech'] = {'enabled': True, 'config': [node.ech_config]}
+        return tls, warning
+
+    @staticmethod
+    def _hysteria2_server_ports(value: str | int) -> list[str]:
+        entries: list[str] = []
+        for raw_entry in str(value).split(','):
+            entry = raw_entry.strip()
+            start, separator, end = entry.partition('-')
+            if not start.isdecimal() or (separator and (not end.isdecimal() or '-' in end)):
+                _raise_render_error(f'invalid hysteria2 server port entry: {entry or "<empty>"}')
+            start_port = SingBox113Renderer._hysteria2_port(start)
+            if not separator:
+                entries.append(str(start_port))
+                continue
+            end_port = SingBox113Renderer._hysteria2_port(end)
+            if start_port > end_port:
+                _raise_render_error(f'invalid hysteria2 server port range: {entry}')
+            entries.append(f'{start_port}:{end_port}')
+        return entries
+
+    @staticmethod
+    def _hysteria2_port(value: str) -> int:
+        port = int(value)
+        if not 1 <= port <= _MAX_PORT:
+            _raise_render_error(f'hysteria2 server port out of range: {port}')
+        return port
+
+    @staticmethod
+    def _hysteria2_duration(value: str | int) -> str:
+        normalized = str(value).strip().lower()
+        seconds = normalized.removesuffix('s')
+        if not seconds.isdecimal() or int(seconds) <= 0:
+            _raise_render_error(f'hysteria2 hop interval must be a positive number of seconds: {value}')
+        return f'{seconds}s'
+
+    @staticmethod
+    def _hysteria2_mbps(value: str | int, field: str) -> int:
+        normalized = str(value).strip().lower()
+        amount = normalized.removesuffix('mbps').strip()
+        if not amount.isdecimal() or int(amount) <= 0:
+            _raise_render_error(f'hysteria2 {field} bandwidth must be a positive integer in Mbps: {value}')
+        return int(amount)
 
     @staticmethod
     def _compile_rule_set(content: str, behavior: str) -> RuleSetArtifact:

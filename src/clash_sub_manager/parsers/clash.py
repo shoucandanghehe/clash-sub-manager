@@ -1,7 +1,5 @@
 """Parser for Clash YAML configuration documents."""
 
-from __future__ import annotations
-
 from typing import Literal, cast
 
 import yaml
@@ -149,12 +147,14 @@ class ClashParser:
 
     @staticmethod
     def _parse_hysteria2(proxy: dict[str, object]) -> Hysteria2Node:
-        require_keys(proxy, ('name', 'server', 'port', 'password'))
+        require_keys(proxy, ('name', 'server', 'port'))
+        ech_opts = ClashParser._mapping(proxy.get('ech-opts'))
         return Hysteria2Node(
             name=str(proxy['name']),
             server=str(proxy['server']),
             port=ClashParser._int_value(proxy['port']),
-            password=str(proxy['password']),
+            password=str(proxy.get('password', '')),
+            udp=bool(proxy.get('udp', True)),
             ports=ClashParser._optional_string_or_int(proxy.get('ports')),
             hop_interval=ClashParser._optional_string_or_int(proxy.get('hop-interval')),
             up=ClashParser._optional_string_or_int(proxy.get('up')),
@@ -169,6 +169,9 @@ class ClashParser:
             name_cert_verify=ClashParser._optional_string(proxy.get('name-cert-verify')),
             fingerprint=ClashParser._optional_string(proxy.get('fingerprint')),
             alpn=ClashParser._string_list(proxy.get('alpn')),
+            ech_config=ClashParser._optional_string(ech_opts.get('config'))
+            if bool(ech_opts.get('enable', False))
+            else None,
             realm_opts=ClashParser._optional_mapping(proxy.get('realm-opts')),
             initial_stream_receive_window=ClashParser._optional_int_value(proxy.get('initial-stream-receive-window')),
             max_stream_receive_window=ClashParser._optional_int_value(proxy.get('max-stream-receive-window')),

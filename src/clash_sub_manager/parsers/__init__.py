@@ -1,20 +1,24 @@
 """Subscription and proxy parsers."""
 
-from __future__ import annotations
+from typing import ClassVar, cast
 
-from typing import TYPE_CHECKING, ClassVar, cast
-
+from ..models.proxy import (
+    AnyTLSNode,
+    Hysteria2Node,
+    ProxyNodeModel,
+    ShadowsocksNode,
+    ShadowsocksRNode,
+    TrojanNode,
+    VMessNode,
+)
 from .anytls import AnyTLSParser
-from .base import decode_urlsafe_base64, split_subscription_entries
+from .base import ShareLinkParser, decode_urlsafe_base64, split_subscription_entries
 from .clash import ClashParser
+from .hysteria2 import Hysteria2Parser
 from .ss import ShadowsocksParser
 from .ssr import ShadowsocksRParser
 from .trojan import TrojanParser
 from .vmess import VMessParser
-
-if TYPE_CHECKING:
-    from ..models.proxy import AnyTLSNode, ProxyNodeModel, ShadowsocksNode, ShadowsocksRNode, TrojanNode, VMessNode
-    from .base import ShareLinkParser
 
 
 def _has_uri_scheme(entry: str) -> bool:
@@ -30,6 +34,8 @@ class ProxyParser:
 
     _PARSERS: ClassVar[dict[str, type[ShareLinkParser]]] = {
         'anytls://': AnyTLSParser,
+        'hysteria2://': Hysteria2Parser,
+        'hy2://': Hysteria2Parser,
         'ss://': ShadowsocksParser,
         'ssr://': ShadowsocksRParser,
         'vmess://': VMessParser,
@@ -87,6 +93,10 @@ class ProxyParser:
         return AnyTLSParser.parse(url)
 
     @staticmethod
+    def parse_hysteria2(url: str) -> Hysteria2Node:
+        return Hysteria2Parser.parse(url)
+
+    @staticmethod
     def parse_ss(url: str) -> ShadowsocksNode:
         return ShadowsocksParser.parse(url)
 
@@ -106,6 +116,7 @@ class ProxyParser:
 __all__ = [
     'AnyTLSParser',
     'ClashParser',
+    'Hysteria2Parser',
     'ProxyParser',
     'ShadowsocksParser',
     'ShadowsocksRParser',

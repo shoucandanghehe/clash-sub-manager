@@ -1,7 +1,5 @@
 """Convert parsed proxy nodes into Clash-compatible dictionaries."""
 
-from __future__ import annotations
-
 from clash_sub_manager.models.proxy import (
     AnyTLSNode,
     Hysteria2Node,
@@ -163,6 +161,7 @@ class ClashConverter:
             'server': node.server,
             'port': node.port,
             'password': node.password,
+            'udp': node.udp,
         }
         ClashConverter._add_hysteria2_transport_options(proxy, node)
         ClashConverter._add_hysteria2_tls_options(proxy, node)
@@ -202,6 +201,8 @@ class ClashConverter:
             proxy['fingerprint'] = node.fingerprint
         if node.alpn is not None:
             proxy['alpn'] = node.alpn
+        if node.ech_config is not None:
+            proxy['ech-opts'] = {'enable': True, 'config': node.ech_config}
         if node.realm_opts is not None:
             proxy['realm-opts'] = node.realm_opts
 

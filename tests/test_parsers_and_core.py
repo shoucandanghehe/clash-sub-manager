@@ -1,18 +1,14 @@
-from __future__ import annotations
-
 import base64
 import contextlib
 import http.server
 import json
 import threading
 import time
-from typing import TYPE_CHECKING, cast
+from collections.abc import Iterator
+from typing import cast
 
 import pytest
 from typing_extensions import override
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 from clash_sub_manager.core import (
     ClashConverter,
@@ -24,6 +20,7 @@ from clash_sub_manager.core import (
     TemplateComposer,
     TemplateProcessor,
 )
+from clash_sub_manager.core.singbox import SingBox113Renderer, SingBoxRenderError
 from clash_sub_manager.db import Template, TemplatePatch
 from clash_sub_manager.models import SubscriptionConfig
 from clash_sub_manager.parsers import ClashParser, ProxyParser
@@ -219,6 +216,44 @@ def test_parse_anytls_share_link() -> None:
     assert node.alpn == ['h2', 'http/1.1']
 
 
+@pytest.mark.parametrize('scheme', ['hysteria2', 'hy2'])
+def test_parse_hysteria2_share_link(scheme: str) -> None:
+    expected_auth = 'user:pass'
+    expected_obfs_auth = 'obfs-secret'
+
+    node = ProxyParser.parse_url(
+        f'{scheme}://user%3Apass@[2001:db8::1]:123,5000-6000/'
+        '?obfs=salamander&obfs-password=obfs-secret&sni=edge.example.com'
+        '&insecure=1&pinSHA256=deadbeef&ech=ZWNo#Hong%20Kong'
+    )
+
+    assert node.type == 'hysteria2'
+    assert node.name == 'Hong Kong'
+    assert node.server == '2001:db8::1'
+    assert node.port == 123
+    assert node.ports == '123,5000-6000'
+    assert node.password == expected_auth
+    assert node.obfs == 'salamander'
+    assert node.obfs_password == expected_obfs_auth
+    assert node.sni == 'edge.example.com'
+    assert node.skip_cert_verify is True
+    assert node.fingerprint == 'deadbeef'
+    assert node.ech_config == 'ZWNo'
+    assert ClashConverter.convert(node)['ech-opts'] == {'enable': True, 'config': 'ZWNo'}
+
+
+def test_parse_hysteria2_share_link_defaults_port_without_auth() -> None:
+    node = ProxyParser.parse_hysteria2('hysteria2://example.com/')
+
+    assert node.name == 'example.com:443'
+    assert node.server == 'example.com'
+    assert node.port == 443
+    assert not node.password
+    [round_trip] = ClashParser.parse_proxies({'proxies': [ClashConverter.convert(node)]})
+    assert round_trip.type == 'hysteria2'
+    assert not round_trip.password
+
+
 def test_converter_preserves_anytls_fields() -> None:
     nodes = ProxyParser.parse_subscription(
         """
@@ -273,6 +308,7 @@ proxies:
     ports: 443-8443
     hop-interval: 15-30
     password: secret
+    udp: false
     up: 30
     down: 200 Mbps
     bbr-profile: aggressive
@@ -304,6 +340,7 @@ proxies:
             'server': 'example.com',
             'port': 443,
             'password': 'secret',
+            'udp': False,
             'ports': '443-8443',
             'hop-interval': '15-30',
             'up': 30,
@@ -329,6 +366,126 @@ proxies:
             'max-connection-receive-window': 20971521,
         }
     ]
+
+
+def test_sing_box_renderer_converts_hysteria2_node() -> None:
+    nodes = ProxyParser.parse_subscription(
+        """
+proxies:
+  - name: Hysteria2
+    type: hysteria2
+    server: example.com
+    port: 443
+    ports: 443,1000-2000
+    hop-interval: 30
+    password: secret
+    udp: false
+    up: 30
+    down: 200 Mbps
+    obfs: salamander
+    obfs-password: obfs-secret
+    sni: edge.example.com
+    skip-cert-verify: true
+    alpn:
+      - h3
+    ech-opts:
+      enable: true
+      config: ZWNo
+"""
+    )
+    template = {
+        'outbounds': [
+            {'$csm': 'node_outbounds'},
+            {'type': 'selector', 'tag': 'proxy', 'outbounds': [{'$csm': 'node_tags'}]},
+            {'type': 'direct', 'tag': 'direct'},
+        ],
+        'route': {
+            'rule_set': [{'$csm': 'rule_sets', 'sources': []}],
+            'rules': [],
+            'final': 'proxy',
+        },
+    }
+
+    result = SingBox113Renderer().render(
+        json.dumps(template),
+        nodes,
+        {},
+        lambda digest: f'https://example.com/rules/{digest}',
+    )
+    document = json.loads(result.content)
+
+    assert document['outbounds'][0] == {
+        'type': 'hysteria2',
+        'tag': 'Hysteria2',
+        'server': 'example.com',
+        'server_ports': ['443', '1000:2000'],
+        'hop_interval': '30s',
+        'up_mbps': 30,
+        'down_mbps': 200,
+        'obfs': {'type': 'salamander', 'password': 'obfs-secret'},
+        'password': 'secret',
+        'network': 'tcp',
+        'tls': {
+            'enabled': True,
+            'server_name': 'edge.example.com',
+            'alpn': ['h3'],
+            'insecure': True,
+            'ech': {'enabled': True, 'config': ['ZWNo']},
+        },
+    }
+    assert result.warnings == ("hysteria2 node 'Hysteria2' enables tls.insecure",)
+
+
+def test_sing_box_renderer_rejects_hysteria2_1_14_only_options() -> None:
+    nodes = ProxyParser.parse_subscription(
+        """
+proxies:
+  - name: Hysteria2
+    type: hysteria2
+    server: example.com
+    port: 443
+    password: secret
+    bbr-profile: aggressive
+    obfs: gecko
+    obfs-password: obfs-secret
+    obfs-min-packet-size: 512
+    obfs-max-packet-size: 1200
+    name-cert-verify: cert.example.com
+    fingerprint: deadbeef
+    realm-opts:
+      enable: true
+    initial-stream-receive-window: 8388608
+    max-stream-receive-window: 8388609
+    initial-connection-receive-window: 20971520
+    max-connection-receive-window: 20971521
+"""
+    )
+    template = {
+        'outbounds': [
+            {'$csm': 'node_outbounds'},
+            {'type': 'selector', 'tag': 'proxy', 'outbounds': [{'$csm': 'node_tags'}]},
+            {'type': 'direct', 'tag': 'direct'},
+        ],
+        'route': {
+            'rule_set': [{'$csm': 'rule_sets', 'sources': []}],
+            'rules': [],
+            'final': 'proxy',
+        },
+    }
+
+    with pytest.raises(
+        SingBoxRenderError,
+        match=(
+            r'options unsupported by sing-box 1\.13: bbr-profile, fingerprint, name-cert-verify, obfs=gecko, '
+            r'obfs-max-packet-size, obfs-min-packet-size, QUIC receive windows, realm-opts'
+        ),
+    ):
+        SingBox113Renderer().render(
+            json.dumps(template),
+            nodes,
+            {},
+            lambda digest: f'https://example.com/rules/{digest}',
+        )
 
 
 def test_parse_clash_yaml_document() -> None:

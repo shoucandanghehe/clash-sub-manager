@@ -1,7 +1,5 @@
 """Domain models for supported proxy protocols."""
 
-from __future__ import annotations
-
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -90,6 +88,7 @@ class AnyTLSNode(ProxyNode):
 class Hysteria2Node(ProxyNode):
     type: Literal['hysteria2'] = 'hysteria2'
     password: str
+    udp: bool = True
     ports: str | int | None = None
     hop_interval: str | int | None = None
     up: str | int | None = None
@@ -104,6 +103,7 @@ class Hysteria2Node(ProxyNode):
     name_cert_verify: str | None = None
     fingerprint: str | None = None
     alpn: list[str] | None = None
+    ech_config: str | None = None
     realm_opts: dict[str, object] | None = None
     initial_stream_receive_window: int | None = Field(default=None, ge=0)
     max_stream_receive_window: int | None = Field(default=None, ge=0)
