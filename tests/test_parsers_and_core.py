@@ -262,6 +262,75 @@ proxies:
     }
 
 
+def test_hysteria2_clash_proxy_round_trip_preserves_fields() -> None:
+    nodes = ProxyParser.parse_subscription(
+        """
+proxies:
+  - name: Hysteria2
+    type: hysteria2
+    server: example.com
+    port: "443"
+    ports: 443-8443
+    hop-interval: 15-30
+    password: secret
+    up: 30
+    down: 200 Mbps
+    bbr-profile: aggressive
+    obfs: gecko
+    obfs-password: obfs-secret
+    obfs-min-packet-size: 512
+    obfs-max-packet-size: 1200
+    sni: edge.example.com
+    skip-cert-verify: true
+    name-cert-verify: cert.example.com
+    fingerprint: "SHA256:01:02:03"
+    alpn:
+      - h3
+    realm-opts:
+      enable: true
+      server-url: https://realm.example.com
+      token: public
+    initial-stream-receive-window: 8388608
+    max-stream-receive-window: 8388609
+    initial-connection-receive-window: 20971520
+    max-connection-receive-window: 20971521
+"""
+    )
+
+    assert ClashConverter.convert_many(nodes) == [
+        {
+            'name': 'Hysteria2',
+            'type': 'hysteria2',
+            'server': 'example.com',
+            'port': 443,
+            'password': 'secret',
+            'ports': '443-8443',
+            'hop-interval': '15-30',
+            'up': 30,
+            'down': '200 Mbps',
+            'bbr-profile': 'aggressive',
+            'obfs': 'gecko',
+            'obfs-password': 'obfs-secret',
+            'obfs-min-packet-size': 512,
+            'obfs-max-packet-size': 1200,
+            'sni': 'edge.example.com',
+            'skip-cert-verify': True,
+            'name-cert-verify': 'cert.example.com',
+            'fingerprint': 'SHA256:01:02:03',
+            'alpn': ['h3'],
+            'realm-opts': {
+                'enable': True,
+                'server-url': 'https://realm.example.com',
+                'token': 'public',
+            },
+            'initial-stream-receive-window': 8388608,
+            'max-stream-receive-window': 8388609,
+            'initial-connection-receive-window': 20971520,
+            'max-connection-receive-window': 20971521,
+        }
+    ]
+
+
 def test_parse_clash_yaml_document() -> None:
     yaml_text = """
 proxies:

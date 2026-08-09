@@ -7,7 +7,15 @@ from typing import Literal, cast
 import yaml
 
 from ..models import ClashConfig
-from ..models.proxy import AnyTLSNode, ProxyNodeModel, ShadowsocksNode, ShadowsocksRNode, TrojanNode, VMessNode
+from ..models.proxy import (
+    AnyTLSNode,
+    Hysteria2Node,
+    ProxyNodeModel,
+    ShadowsocksNode,
+    ShadowsocksRNode,
+    TrojanNode,
+    VMessNode,
+)
 from .base import require_keys
 
 SupportedNetwork = Literal['tcp', 'ws', 'grpc']
@@ -43,6 +51,8 @@ class ClashParser:
                 return cls._parse_trojan(proxy)
             case 'anytls':
                 return cls._parse_anytls(proxy)
+            case 'hysteria2':
+                return cls._parse_hysteria2(proxy)
             case _:
                 msg = f'unsupported clash proxy type: {raw_type or "<missing>"}'
                 raise ValueError(msg)
@@ -138,6 +148,37 @@ class ClashParser:
         )
 
     @staticmethod
+    def _parse_hysteria2(proxy: dict[str, object]) -> Hysteria2Node:
+        require_keys(proxy, ('name', 'server', 'port', 'password'))
+        return Hysteria2Node(
+            name=str(proxy['name']),
+            server=str(proxy['server']),
+            port=ClashParser._int_value(proxy['port']),
+            password=str(proxy['password']),
+            ports=ClashParser._optional_string_or_int(proxy.get('ports')),
+            hop_interval=ClashParser._optional_string_or_int(proxy.get('hop-interval')),
+            up=ClashParser._optional_string_or_int(proxy.get('up')),
+            down=ClashParser._optional_string_or_int(proxy.get('down')),
+            bbr_profile=ClashParser._optional_string(proxy.get('bbr-profile')),
+            obfs=ClashParser._optional_string(proxy.get('obfs')),
+            obfs_password=ClashParser._optional_string(proxy.get('obfs-password')),
+            obfs_min_packet_size=ClashParser._optional_int_value(proxy.get('obfs-min-packet-size')),
+            obfs_max_packet_size=ClashParser._optional_int_value(proxy.get('obfs-max-packet-size')),
+            sni=ClashParser._optional_string(proxy.get('sni')),
+            skip_cert_verify=bool(proxy.get('skip-cert-verify', False)),
+            name_cert_verify=ClashParser._optional_string(proxy.get('name-cert-verify')),
+            fingerprint=ClashParser._optional_string(proxy.get('fingerprint')),
+            alpn=ClashParser._string_list(proxy.get('alpn')),
+            realm_opts=ClashParser._optional_mapping(proxy.get('realm-opts')),
+            initial_stream_receive_window=ClashParser._optional_int_value(proxy.get('initial-stream-receive-window')),
+            max_stream_receive_window=ClashParser._optional_int_value(proxy.get('max-stream-receive-window')),
+            initial_connection_receive_window=ClashParser._optional_int_value(
+                proxy.get('initial-connection-receive-window')
+            ),
+            max_connection_receive_window=ClashParser._optional_int_value(proxy.get('max-connection-receive-window')),
+        )
+
+    @staticmethod
     def _int_value(value: object) -> int:
         if isinstance(value, int):
             return value
@@ -153,6 +194,21 @@ class ClashParser:
         return ClashParser._int_value(value)
 
     @staticmethod
+    def _optional_string_or_int(value: object) -> str | int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            msg = 'expected a string or integer value'
+            raise TypeError(msg)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        msg = 'expected a string or integer value'
+        raise TypeError(msg)
+
+    @staticmethod
     def _mapping(value: object) -> dict[str, object]:
         if value is None:
             return {}
@@ -160,6 +216,12 @@ class ClashParser:
             msg = 'expected a mapping'
             raise TypeError(msg)
         return {str(key): entry for key, entry in value.items()}
+
+    @staticmethod
+    def _optional_mapping(value: object) -> dict[str, object] | None:
+        if value is None:
+            return None
+        return ClashParser._mapping(value)
 
     @staticmethod
     def _string_mapping(value: object) -> dict[str, str] | None:

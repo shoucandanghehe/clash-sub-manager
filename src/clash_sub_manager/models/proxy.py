@@ -87,13 +87,38 @@ class AnyTLSNode(ProxyNode):
     tfo: bool = False
 
 
+class Hysteria2Node(ProxyNode):
+    type: Literal['hysteria2'] = 'hysteria2'
+    password: str
+    ports: str | int | None = None
+    hop_interval: str | int | None = None
+    up: str | int | None = None
+    down: str | int | None = None
+    bbr_profile: str | None = None
+    obfs: str | None = None
+    obfs_password: str | None = None
+    obfs_min_packet_size: int | None = Field(default=None, ge=0)
+    obfs_max_packet_size: int | None = Field(default=None, ge=0)
+    sni: str | None = None
+    skip_cert_verify: bool = False
+    name_cert_verify: str | None = None
+    fingerprint: str | None = None
+    alpn: list[str] | None = None
+    realm_opts: dict[str, object] | None = None
+    initial_stream_receive_window: int | None = Field(default=None, ge=0)
+    max_stream_receive_window: int | None = Field(default=None, ge=0)
+    initial_connection_receive_window: int | None = Field(default=None, ge=0)
+    max_connection_receive_window: int | None = Field(default=None, ge=0)
+
+
 ProxyNodeModel = Annotated[
-    ShadowsocksNode | ShadowsocksRNode | VMessNode | TrojanNode | AnyTLSNode,
+    ShadowsocksNode | ShadowsocksRNode | VMessNode | TrojanNode | AnyTLSNode | Hysteria2Node,
     Field(discriminator='type'),
 ]
 
 __all__ = [
     'AnyTLSNode',
+    'Hysteria2Node',
     'ProxyNode',
     'ProxyNodeModel',
     'ShadowsocksNode',
