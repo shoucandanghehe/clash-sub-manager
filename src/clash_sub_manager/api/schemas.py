@@ -278,6 +278,11 @@ class TemplateSourceInput(BaseModel):
         return self
 
 
+class SingBoxVersionRead(BaseModel):
+    compatibility_version: str
+    schema_version: str
+
+
 class MergeProfileTargetInput(BaseModel):
     compatibility_version: str
     template_id: int = Field(ge=1)
@@ -297,6 +302,7 @@ class MergeProfileRead(BaseModel):
     name: str
     enabled: bool
     template_source: TemplateSourceRead | None
+    sing_box_target: MergeProfileTargetRead | None
     subscriptions: list[SubscriptionSummaryRead]
 
 
@@ -345,6 +351,7 @@ __all__ = [
     'RuleSourceCreate',
     'RuleSourceRead',
     'RuleSourceUpdate',
+    'SingBoxVersionRead',
     'SubscriptionCreate',
     'SubscriptionRead',
     'SubscriptionSourceInput',

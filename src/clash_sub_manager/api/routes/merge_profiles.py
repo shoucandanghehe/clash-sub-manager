@@ -39,6 +39,7 @@ from ..schemas import (
     MergeProfileTargetInput,
     MergeProfileTargetRead,
     MergeProfileUpdate,
+    SingBoxVersionRead,
     SubscriptionSummaryRead,
     TemplateSourceInput,
     TemplateSourceRead,
@@ -108,6 +109,7 @@ async def _get_merge_profile_or_404(profile_id: int, db: AsyncSession) -> MergeP
             selectinload(MergeProfile.template),
             selectinload(MergeProfile.composite_template),
             selectinload(MergeProfile.subscriptions),
+            selectinload(MergeProfile.targets),
         )
         .where(MergeProfile.id == profile_id)
     )
@@ -208,6 +210,14 @@ def _serialize_merge_profile(merge_profile: MergeProfile) -> MergeProfileRead:
         name=merge_profile.name,
         enabled=merge_profile.enabled,
         template_source=_serialize_template_source(merge_profile),
+        sing_box_target=next(
+            (
+                MergeProfileTargetRead.model_validate(binding)
+                for binding in merge_profile.targets
+                if binding.target == 'sing-box'
+            ),
+            None,
+        ),
         subscriptions=[SubscriptionSummaryRead.model_validate(subscription) for subscription in ordered_subscriptions],
     )
 
@@ -310,12 +320,21 @@ async def _apply_template_source(
     merge_profile.template_id = None
 
 
+@router.get('/api/v1/sing-box/versions')
+async def list_sing_box_versions() -> list[SingBoxVersionRead]:
+    return [
+        SingBoxVersionRead(compatibility_version=compatibility_version, schema_version=schema_version)
+        for compatibility_version, schema_version in SING_BOX_SCHEMA_VERSIONS.items()
+    ]
+
+
 @router.get('/merge-profiles')
 async def list_merge_profiles(db: DbSession) -> list[MergeProfileRead]:
     statement = select(MergeProfile).options(
         selectinload(MergeProfile.template),
         selectinload(MergeProfile.composite_template),
         selectinload(MergeProfile.subscriptions),
+        selectinload(MergeProfile.targets),
     )
     merge_profiles = list((await db.scalars(statement.order_by(MergeProfile.id))).all())
     return [_serialize_merge_profile(merge_profile) for merge_profile in merge_profiles]
@@ -407,6 +426,19 @@ async def upsert_sing_box_target(
     await db.commit()
     await db.refresh(binding)
     return binding
+
+
+@router.delete('/merge-profiles/{profile_id}/targets/sing-box', status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sing_box_target(profile_id: int, db: DbSession) -> Response:
+    await _get_merge_profile_or_404(profile_id, db)
+    await db.execute(
+        delete(MergeProfileTarget).where(
+            MergeProfileTarget.profile_id == profile_id,
+            MergeProfileTarget.target == 'sing-box',
+        )
+    )
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def _get_sing_box_profile(

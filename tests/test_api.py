@@ -337,6 +337,88 @@ def test_mihomo_profile_keeps_legacy_config_url_with_target_metadata(client: Tes
     assert yaml.safe_load(config_response.text)['proxies'][0]['name'] == 'Legacy'
 
 
+def test_sing_box_version_catalog(client: TestClient) -> None:
+    response = client.get('/api/v1/sing-box/versions')
+    assert response.status_code == 200
+    assert response.json() == [
+        {'compatibility_version': '1.13.14', 'schema_version': '1.13'},
+        {'compatibility_version': '1.14.3', 'schema_version': '1.14'},
+    ]
+
+
+def test_sing_box_binding_reads_and_removal_preserve_mihomo(client: TestClient) -> None:
+    subscription = client.post(
+        '/subscriptions',
+        json={'name': 'binding-nodes', 'content': 'trojan://secret@example.com:443#Binding'},
+    ).json()
+    mihomo_template = client.post(
+        '/templates',
+        json={'name': 'binding-mihomo', 'content': 'rules:\n  - MATCH,DIRECT'},
+    ).json()
+    template = client.post(
+        '/templates',
+        json={
+            'name': 'binding-sing-box',
+            'content': json.dumps(_minimal_sing_box_template()),
+            'target': 'sing-box',
+            'schema_version': '1.14',
+            'format': 'json',
+        },
+    ).json()
+    created = client.post(
+        '/merge-profiles',
+        json={
+            'name': 'binding-profile',
+            'subscription_ids': [subscription['id']],
+            'template_source': {'kind': 'template', 'id': mihomo_template['id']},
+        },
+    )
+    assert created.status_code == 201
+    profile = created.json()
+    assert profile['sing_box_target'] is None
+    profile_url = f'/merge-profiles/{profile["id"]}'
+    binding_url = f'{profile_url}/targets/sing-box'
+    mihomo_before = client.get('/merge-profiles/by-name/binding-profile/config')
+    assert mihomo_before.status_code == 200
+    bound = client.put(binding_url, json={'compatibility_version': '1.14.3', 'template_id': template['id']})
+    assert bound.status_code == 200
+    binding = bound.json()
+    assert binding == {
+        'id': binding['id'],
+        'profile_id': profile['id'],
+        'target': 'sing-box',
+        'compatibility_version': '1.14.3',
+        'template_id': template['id'],
+    }
+    expected = {**profile, 'sing_box_target': binding}
+    assert client.get(profile_url).json() == expected
+    assert client.get('/merge-profiles').json() == [expected]
+    updated = client.put(profile_url, json={'name': 'renamed-binding-profile'})
+    assert updated.status_code == 200
+    expected['name'] = 'renamed-binding-profile'
+    assert updated.json() == expected
+    assert client.get(profile_url).json() == expected
+    assert client.get('/merge-profiles').json() == [expected]
+
+    for _ in range(2):
+        removed = client.delete(binding_url)
+        assert removed.status_code == 204
+        assert removed.content == b''
+        expected['sing_box_target'] = None
+        assert client.get(profile_url).json() == expected
+        assert client.get('/merge-profiles').json() == [expected]
+        mihomo_after = client.get('/merge-profiles/by-name/renamed-binding-profile/config')
+        assert mihomo_after.status_code == 200
+        assert yaml.safe_load(mihomo_after.text) == yaml.safe_load(mihomo_before.text)
+        assert client.get(f'/templates/{template["id"]}').json() == template
+        assert client.get(f'/templates/{mihomo_template["id"]}').json() == mihomo_template
+        assert client.get(f'/subscriptions/{subscription["id"]}').json() == subscription
+
+    missing = client.delete('/merge-profiles/999999/targets/sing-box')
+    assert missing.status_code == 404
+    assert missing.json() == {'detail': 'merge profile not found'}
+
+
 def test_sing_box_target_rejects_target_version_and_template_mismatches(client: TestClient) -> None:
     subscription = client.post(
         '/subscriptions',

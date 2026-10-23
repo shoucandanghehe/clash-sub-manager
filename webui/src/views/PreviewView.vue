@@ -12,6 +12,7 @@ const {
   convertPreview,
   mergePreview,
   mergeProfilePreview,
+  mergeProfilePreviewFormat,
   mergeProfilePreviewName,
   subscriptions,
   templates,
@@ -24,9 +25,13 @@ const selectedTemplateId = ref<number | null>(null)
 const enabledSubscriptionCount = computed(() => {
   return subscriptions.value.filter((subscription) => subscription.enabled).length
 })
+const mihomoTemplates = computed(() => {
+  return templates.value.filter((template) => template.target === 'mihomo')
+})
+
 
 watch(
-  templates,
+  mihomoTemplates,
   (items) => {
     if (items.length === 0) {
       selectedTemplateId.value = null
@@ -95,10 +100,10 @@ async function generateMergePreview(): Promise<void> {
           <div class="d-flex flex-column ga-4">
             <v-select
               v-model="selectedTemplateId"
-              :items="templates"
+              :items="mihomoTemplates"
               item-title="name"
               item-value="id"
-              label="预览模板"
+              label="Mihomo 预览模板"
               clearable
             />
             <v-alert color="primary" density="comfortable" variant="tonal">
@@ -113,10 +118,10 @@ async function generateMergePreview(): Promise<void> {
       </v-card>
     </v-col>
 
-    <v-col cols="12" xl="4">
+    <v-col id="merge-profile-preview" cols="12" xl="4" style="scroll-margin-top: var(--v-layout-top)">
       <v-card class="fill-height">
         <v-card-item>
-          <v-card-title class="px-0">合并配置生成结果</v-card-title>
+          <v-card-title class="px-0">合并配置生成结果 · {{ mergeProfilePreviewFormat === 'json' ? 'sing-box JSON' : 'Mihomo YAML' }}</v-card-title>
           <v-card-subtitle class="px-0">{{ mergeProfilePreviewName || '从“合并配置”页面点击生成后会显示在这里。' }}</v-card-subtitle>
         </v-card-item>
         <v-card-text>

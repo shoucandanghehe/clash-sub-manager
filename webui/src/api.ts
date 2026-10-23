@@ -83,12 +83,26 @@ export interface TemplateSourceRecord {
   kind: 'template' | 'composite'
 }
 
+export interface SingBoxVersionRecord {
+  compatibility_version: string
+  schema_version: string
+}
+
+export interface MergeProfileTargetRecord {
+  id: number
+  profile_id: number
+  target: 'sing-box'
+  compatibility_version: string
+  template_id: number
+}
+
 export interface MergeProfileRecord {
   public_id: string
   id: number
   name: string
   enabled: boolean
   template_source: TemplateSourceRecord | null
+  sing_box_target: MergeProfileTargetRecord | null
   subscriptions: SubscriptionSummaryRecord[]
 }
 
@@ -137,6 +151,11 @@ export interface MergeProfilePayload {
   template_source?: TemplateSourceRecord | null
   enabled?: boolean
   subscription_ids: number[]
+}
+
+export interface MergeProfileTargetPayload {
+  compatibility_version: string
+  template_id: number
 }
 
 export interface ConvertPayload {
@@ -207,6 +226,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+export function singBoxConfigPath(publicId: string, compatibilityVersion: string): string {
+  const query = new URLSearchParams({ compat: compatibilityVersion })
+  return `/api/v1/merge-profiles/${encodeURIComponent(publicId)}/targets/sing-box/config.json?${query}`
+}
+
 export const api = {
   listSubscriptions: () => request<SubscriptionRecord[]>('/subscriptions'),
   createSubscription: (payload: SubscriptionPayload) =>
@@ -248,6 +272,16 @@ export const api = {
   refreshRuleSource: (id: number) => request<string>(`/rule-sources/${id}/update`, { method: 'POST' }),
   deleteRuleSource: (id: number) => request<void>(`/rule-sources/${id}`, { method: 'DELETE' }),
   listMergeProfiles: () => request<MergeProfileRecord[]>('/merge-profiles'),
+  listSingBoxVersions: () => request<SingBoxVersionRecord[]>('/api/v1/sing-box/versions'),
+  upsertSingBoxTarget: (id: number, payload: MergeProfileTargetPayload) =>
+    request<MergeProfileTargetRecord>(`/merge-profiles/${id}/targets/sing-box`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deleteSingBoxTarget: (id: number) =>
+    request<void>(`/merge-profiles/${id}/targets/sing-box`, { method: 'DELETE' }),
+  getSingBoxConfig: (publicId: string, compatibilityVersion: string) =>
+    request<Record<string, unknown>>(singBoxConfigPath(publicId, compatibilityVersion)),
   createMergeProfile: (payload: MergeProfilePayload) =>
     request<MergeProfileRecord>('/merge-profiles', { method: 'POST', body: JSON.stringify(payload) }),
   updateMergeProfile: (id: number, payload: Partial<MergeProfilePayload>) =>

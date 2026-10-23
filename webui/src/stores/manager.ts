@@ -10,8 +10,10 @@ import {
   type MergePayload,
   type MergeProfilePayload,
   type MergeProfileRecord,
+  type MergeProfileTargetPayload,
   type RuleSourcePayload,
   type RuleSourceRecord,
+  type SingBoxVersionRecord,
   type SubscriptionPayload,
   type SubscriptionRecord,
   type TemplatePatchPayload,
@@ -39,10 +41,12 @@ export const useManagerStore = defineStore('manager', () => {
   const compositeTemplates = ref<CompositeTemplateRecord[]>([])
   const ruleSources = ref<RuleSourceRecord[]>([])
   const mergeProfiles = ref<MergeProfileRecord[]>([])
+  const singBoxVersions = ref<SingBoxVersionRecord[]>([])
   const convertPreview = ref('')
   const mergePreview = ref('')
   const mergeProfilePreview = ref('')
   const mergeProfilePreviewName = ref('')
+  const mergeProfilePreviewFormat = ref<'yaml' | 'json'>('yaml')
   const templatePatchPreview = ref('')
   const templatePatchPreviewName = ref('')
   const compositeTemplatePreview = ref('')
@@ -171,6 +175,10 @@ export const useManagerStore = defineStore('manager', () => {
     mergeProfiles.value = await api.listMergeProfiles()
   }
 
+  async function reloadSingBoxVersions(): Promise<void> {
+    singBoxVersions.value = await api.listSingBoxVersions()
+  }
+
   async function refreshAll(): Promise<boolean> {
     return run('数据已刷新。', async () => {
       await Promise.all([
@@ -180,6 +188,7 @@ export const useManagerStore = defineStore('manager', () => {
         reloadCompositeTemplates(),
         reloadRuleSources(),
         reloadMergeProfiles(),
+        reloadSingBoxVersions(),
       ])
     })
   }
@@ -354,6 +363,20 @@ export const useManagerStore = defineStore('manager', () => {
     })
   }
 
+  async function saveSingBoxTarget(id: number, payload: MergeProfileTargetPayload): Promise<boolean> {
+    return run('sing-box 目标已保存。', async () => {
+      await api.upsertSingBoxTarget(id, payload)
+      await reloadMergeProfiles()
+    })
+  }
+
+  async function deleteSingBoxTarget(id: number): Promise<boolean> {
+    return run('sing-box 绑定已解除。', async () => {
+      await api.deleteSingBoxTarget(id)
+      await reloadMergeProfiles()
+    })
+  }
+
   async function runConvertPreview(payload: ConvertPayload): Promise<boolean> {
     return run('已生成转换预览。', async () => {
       const result = await api.convertPreview(payload)
@@ -393,6 +416,21 @@ export const useManagerStore = defineStore('manager', () => {
       const result = await api.generateMergeProfile(id)
       mergeProfilePreview.value = result.content
       mergeProfilePreviewName.value = mergeProfiles.value.find((profile) => profile.id === id)?.name ?? '合并配置'
+      mergeProfilePreviewFormat.value = 'yaml'
+    })
+  }
+
+  async function runSingBoxProfilePreview(profile: MergeProfileRecord): Promise<boolean> {
+    const target = profile.sing_box_target
+    if (target === null) {
+      showError('请先绑定 sing-box 目标。')
+      return false
+    }
+    return run('已生成 sing-box JSON 配置。', async () => {
+      const result = await api.getSingBoxConfig(profile.public_id, target.compatibility_version)
+      mergeProfilePreview.value = JSON.stringify(result, null, 2)
+      mergeProfilePreviewName.value = profile.name
+      mergeProfilePreviewFormat.value = 'json'
     })
   }
 
@@ -414,12 +452,14 @@ export const useManagerStore = defineStore('manager', () => {
     deleteCompositeTemplate,
     deleteMergeProfile,
     deleteRuleSource,
+    deleteSingBoxTarget,
     deleteSubscription,
     deleteTemplate,
     deleteTemplatePatch,
     error,
     mergePreview,
     mergeProfilePreview,
+    mergeProfilePreviewFormat,
     mergeProfilePreviewName,
     mergeProfiles,
     notice,
@@ -434,8 +474,11 @@ export const useManagerStore = defineStore('manager', () => {
     runConvertPreview,
     runMergePreview,
     runMergeProfilePreview,
+    runSingBoxProfilePreview,
+    saveSingBoxTarget,
     showError,
     showNotice,
+    singBoxVersions,
     subscriptions,
     templatePatchPreview,
     templatePatchPreviewName,

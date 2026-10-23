@@ -39,6 +39,7 @@ import {
 
 type TemplateTab = 'templates' | 'patches' | 'composites'
 type PatchOperationKind = TemplatePatchOperation['op']
+type TemplateTarget = TemplateRecord['target']
 
 interface DiffLine {
   type: 'context' | 'add' | 'remove'
@@ -51,6 +52,8 @@ interface TemplateForm {
   name: string
   content: string
   isDefault: boolean
+  target: TemplateTarget
+  schemaVersion: string | null
 }
 
 interface TemplatePatchForm {
@@ -81,7 +84,27 @@ interface PatchOperationOption {
   description: string
 }
 
-const DEFAULT_TEMPLATE = 'proxies: []\nproxy-groups: []\nrules: []\n'
+const DEFAULT_MIHOMO_TEMPLATE = 'proxies: []\nproxy-groups: []\nrules: []\n'
+const DEFAULT_SING_BOX_TEMPLATE = `{
+  "outbounds": [
+    { "$csm": "node_outbounds" },
+    { "type": "selector", "tag": "proxy", "outbounds": [{ "$csm": "node_tags" }, "direct"] },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [],
+    "rule_set": [
+      { "$csm": "rule_sets", "sources": [] }
+    ],
+    "final": "proxy",
+    "auto_detect_interface": true
+  }
+}
+`
+const TEMPLATE_TARGET_OPTIONS = [
+  { title: 'Mihomo（YAML v1）', value: 'mihomo' },
+  { title: 'sing-box（JSON）', value: 'sing-box' },
+] as const
 
 const PATCH_OPERATION_OPTIONS: PatchOperationOption[] = [
   { value: 'set', title: 'set', description: '替换指定路径的值' },
@@ -108,6 +131,7 @@ const {
   compositeTemplatePreview,
   compositeTemplatePreviewName,
   compositeTemplates,
+  singBoxVersions,
   templatePatchPreview,
   templatePatchPreviewName,
   templatePatches,
@@ -125,8 +149,10 @@ const templateEditingId = ref<number | null>(null)
 const selectedTemplateId = ref<number | null>(null)
 const templateForm = reactive<TemplateForm>({
   name: '',
-  content: DEFAULT_TEMPLATE,
+  content: DEFAULT_MIHOMO_TEMPLATE,
   isDefault: false,
+  target: 'mihomo',
+  schemaVersion: '1',
 })
 
 const patchDialog = ref(false)
@@ -161,6 +187,7 @@ const compositeForm = reactive<CompositeTemplateForm>({
 
 const templateHeaders = [
   { title: '名称', key: 'name' },
+  { title: '类型', key: 'target' },
   { title: '默认', key: 'is_default' },
   { title: '预览', key: 'preview' },
   { title: '操作', key: 'actions', sortable: false, align: 'end' },
@@ -193,8 +220,27 @@ const compositeDialogTitle = computed(() => {
 })
 
 const canSubmitTemplate = computed(() => {
-  return templateForm.name.trim().length > 0 && templateForm.content.trim().length > 0
+  return templateForm.name.trim().length > 0
+    && templateForm.content.trim().length > 0
+    && templateForm.schemaVersion !== null
 })
+
+const mihomoTemplates = computed(() => {
+  return templates.value.filter((template) => template.target === 'mihomo')
+})
+
+const defaultMihomoTemplateId = computed(() => {
+  return mihomoTemplates.value.find((template) => template.is_default)?.id ?? mihomoTemplates.value[0]?.id ?? null
+})
+
+const templateContentLabel = computed(() => {
+  return templateForm.target === 'mihomo' ? 'Mihomo YAML 内容' : 'sing-box JSON 内容'
+})
+
+function formatTemplateType(template: TemplateRecord): string {
+  const target = template.target === 'mihomo' ? 'Mihomo' : 'sing-box'
+  return `${target} · ${template.format.toUpperCase()} v${template.schema_version}`
+}
 
 const patchValidationMessage = computed(() => {
   try {
@@ -230,7 +276,7 @@ const editingComposite = computed(() => {
 })
 
 const patchAuthoringTemplate = computed(() => {
-  return templates.value.find((template) => template.id === patchAuthoringTemplateId.value) ?? null
+  return mihomoTemplates.value.find((template) => template.id === patchAuthoringTemplateId.value) ?? null
 })
 
 const patchAuthoringDocument = computed(() => {
@@ -337,34 +383,27 @@ const activePatchOperation = computed(() => {
 watch(
   templates,
   (items) => {
-    if (items.length === 0) {
-      selectedTemplateId.value = null
-      patchPreviewTemplateId.value = null
-      patchAuthoringTemplateId.value = null
-      if (!compositeDialog.value) {
-        compositeForm.baseTemplateId = null
-      }
-      return
-    }
-
     if (!items.some((template) => template.id === selectedTemplateId.value)) {
-      selectedTemplateId.value = items.find((template) => template.is_default)?.id ?? items[0].id
+      selectedTemplateId.value = items.find((template) => template.is_default)?.id ?? items[0]?.id ?? null
     }
 
-    if (!items.some((template) => template.id === patchPreviewTemplateId.value)) {
-      patchPreviewTemplateId.value = items.find((template) => template.is_default)?.id ?? items[0].id
+    const patchableItems = items.filter((template) => template.target === 'mihomo')
+    const patchableDefaultId =
+      patchableItems.find((template) => template.is_default)?.id ?? patchableItems[0]?.id ?? null
+
+    if (!patchableItems.some((template) => template.id === patchPreviewTemplateId.value)) {
+      patchPreviewTemplateId.value = patchableDefaultId
     }
 
-    if (!items.some((template) => template.id === patchAuthoringTemplateId.value)) {
-      patchAuthoringTemplateId.value = items.find((template) => template.is_default)?.id ?? items[0].id
+    if (!patchableItems.some((template) => template.id === patchAuthoringTemplateId.value)) {
+      patchAuthoringTemplateId.value = patchableDefaultId
     }
-
 
     if (
       compositeForm.baseTemplateId !== null &&
-      !items.some((template) => template.id === compositeForm.baseTemplateId)
+      !patchableItems.some((template) => template.id === compositeForm.baseTemplateId)
     ) {
-      compositeForm.baseTemplateId = items.find((template) => template.is_default)?.id ?? items[0].id
+      compositeForm.baseTemplateId = patchableDefaultId
     }
   },
   { immediate: true },
@@ -728,13 +767,27 @@ function applyPatchOperationDefaults(row: LowCodePatchOperationRow, nextOp: Patc
 function resetTemplateForm(): void {
   templateEditingId.value = null
   templateForm.name = ''
-  templateForm.content = DEFAULT_TEMPLATE
+  templateForm.content = DEFAULT_MIHOMO_TEMPLATE
   templateForm.isDefault = false
+  templateForm.target = 'mihomo'
+  templateForm.schemaVersion = '1'
 }
 
 function openCreateTemplateDialog(): void {
   resetTemplateForm()
   templateDialog.value = true
+}
+
+function updateTemplateTarget(target: TemplateTarget): void {
+  if (templateEditingId.value !== null || target === templateForm.target) {
+    return
+  }
+  templateForm.target = target
+  templateForm.content = target === 'mihomo' ? DEFAULT_MIHOMO_TEMPLATE : DEFAULT_SING_BOX_TEMPLATE
+  templateForm.schemaVersion = target === 'mihomo' ? '1' : singBoxVersions.value[0]?.schema_version ?? null
+  if (target === 'sing-box') {
+    templateForm.isDefault = false
+  }
 }
 
 function openEditTemplateDialog(template: TemplateRecord): void {
@@ -743,14 +796,25 @@ function openEditTemplateDialog(template: TemplateRecord): void {
   templateForm.name = template.name
   templateForm.content = template.content
   templateForm.isDefault = template.is_default
+  templateForm.target = template.target
+  templateForm.schemaVersion = template.schema_version
   templateDialog.value = true
 }
 
 async function saveTemplate(): Promise<void> {
+  const schemaVersion = templateForm.schemaVersion
+  if (schemaVersion === null) {
+    return
+  }
   const payload: TemplatePayload = {
     name: templateForm.name.trim(),
     content: templateForm.content,
     is_default: templateForm.isDefault,
+  }
+  if (templateEditingId.value === null) {
+    payload.target = templateForm.target
+    payload.schema_version = schemaVersion
+    payload.format = templateForm.target === 'mihomo' ? 'yaml' : 'json'
   }
 
   const succeeded = templateEditingId.value === null
@@ -806,7 +870,7 @@ function resetPatchForm(): void {
   patchForm.description = ''
   patchForm.operations = [createPatchOperationRow()]
   activePatchOperationId.value = patchForm.operations[0]?.id ?? null
-  patchAuthoringTemplateId.value = templates.value.find((template) => template.is_default)?.id ?? templates.value[0]?.id ?? null
+  patchAuthoringTemplateId.value = defaultMihomoTemplateId.value
   expandedContextOperationIds.value = []
   patchJsonError.value = ''
   syncPatchJsonFromLowCode()
@@ -852,7 +916,7 @@ function openEditPatchDialog(patch: TemplatePatchRecord): void {
   patchForm.name = patch.name
   patchForm.description = patch.description ?? ''
   setLowCodeOperations(patch.operations)
-  patchAuthoringTemplateId.value = templates.value.find((template) => template.is_default)?.id ?? templates.value[0]?.id ?? null
+  patchAuthoringTemplateId.value = defaultMihomoTemplateId.value
   expandedContextOperationIds.value = []
   patchJsonError.value = ''
   syncPatchJsonFromLowCode()
@@ -950,7 +1014,7 @@ async function previewPatch(): Promise<void> {
 function resetCompositeForm(): void {
   compositeEditingId.value = null
   compositeForm.name = ''
-  compositeForm.baseTemplateId = templates.value.find((template) => template.is_default)?.id ?? templates.value[0]?.id ?? null
+  compositeForm.baseTemplateId = defaultMihomoTemplateId.value
   compositeForm.patchSequence = []
   compositeTemplatePreview.value = ''
   compositeTemplatePreviewName.value = ''
@@ -1132,9 +1196,19 @@ const compositeDraftHasDiff = computed(() => {
           </v-card-item>
 
           <v-data-table :headers="templateHeaders" :items="templates" item-value="id">
+            <template #item.target="{ item }">
+              <v-chip :color="item.target === 'mihomo' ? 'primary' : 'secondary'" size="small" variant="tonal">
+                {{ formatTemplateType(item) }}
+              </v-chip>
+            </template>
+
             <template #item.is_default="{ item }">
-              <v-chip :color="item.is_default ? 'primary' : 'default'" size="small" variant="tonal">
-                {{ item.is_default ? '默认模板' : '普通模板' }}
+              <v-chip
+                :color="item.target === 'mihomo' && item.is_default ? 'primary' : 'default'"
+                size="small"
+                variant="tonal"
+              >
+                {{ item.target === 'mihomo' ? (item.is_default ? '默认模板' : '普通模板') : '不适用' }}
               </v-chip>
             </template>
 
@@ -1159,11 +1233,13 @@ const compositeDraftHasDiff = computed(() => {
         <v-card class="fill-height">
           <v-card-item>
             <v-card-title class="px-0">基础模板预览</v-card-title>
-            <v-card-subtitle class="px-0">{{ selectedTemplate?.name ?? '尚未选择基础模板' }}</v-card-subtitle>
+            <v-card-subtitle class="px-0">
+              {{ selectedTemplate ? `${selectedTemplate.name} · ${formatTemplateType(selectedTemplate)}` : '尚未选择基础模板' }}
+            </v-card-subtitle>
           </v-card-item>
           <v-card-text>
             <v-sheet class="preview-panel" color="surface-variant" rounded="xl">
-              <pre>{{ selectedTemplate?.content ?? '从左侧列表选择一个基础模板，即可在这里查看完整 YAML。' }}</pre>
+              <pre>{{ selectedTemplate?.content ?? '从左侧列表选择一个基础模板，即可在这里查看完整内容。' }}</pre>
             </v-sheet>
           </v-card-text>
         </v-card>
@@ -1211,11 +1287,11 @@ const compositeDraftHasDiff = computed(() => {
           <v-card-text class="d-flex flex-column ga-4">
             <v-select
               v-model="patchPreviewTemplateId"
-              :items="templates"
+              :items="mihomoTemplates"
               item-title="name"
               item-value="id"
-              label="预览使用的基础模板"
-              :disabled="templates.length === 0"
+              label="预览使用的 Mihomo 基础模板"
+              :disabled="mihomoTemplates.length === 0"
             />
             <v-btn
               color="primary"
@@ -1306,14 +1382,44 @@ const compositeDraftHasDiff = computed(() => {
 
       <v-card-text>
         <v-row>
-          <v-col cols="12" md="8">
+          <v-col cols="12" md="5">
             <v-text-field v-model="templateForm.name" label="模板名称" maxlength="255" />
           </v-col>
           <v-col cols="12" md="4">
-            <v-switch v-model="templateForm.isDefault" label="设为默认" hide-details />
+            <v-select
+              :model-value="templateForm.target"
+              :items="TEMPLATE_TARGET_OPTIONS"
+              item-title="title"
+              item-value="value"
+              label="模板类型"
+              :disabled="templateEditingId !== null"
+              hint="类型创建后不可更改；切换类型会重置模板内容。"
+              persistent-hint
+              @update:model-value="(value) => updateTemplateTarget(value as TemplateTarget)"
+            />
+          </v-col>
+          <v-col cols="12" md="3">
+            <v-switch
+              v-model="templateForm.isDefault"
+              label="设为默认"
+              :disabled="templateForm.target !== 'mihomo'"
+              hide-details
+            />
+          </v-col>
+          <v-col v-if="templateForm.target === 'sing-box'" cols="12">
+            <v-select
+              v-model="templateForm.schemaVersion"
+              :items="singBoxVersions"
+              item-title="compatibility_version"
+              item-value="schema_version"
+              label="sing-box 版本"
+              :disabled="templateEditingId !== null"
+              hint="版本创建后不可更改；编辑内容会保留原版本。"
+              persistent-hint
+            />
           </v-col>
           <v-col cols="12">
-            <v-textarea v-model="templateForm.content" label="YAML 内容" rows="18" />
+            <v-textarea v-model="templateForm.content" :label="templateContentLabel" rows="18" />
           </v-col>
         </v-row>
       </v-card-text>
@@ -1343,11 +1449,11 @@ const compositeDraftHasDiff = computed(() => {
           <v-col cols="12" md="4">
             <v-select
               v-model="patchAuthoringTemplateId"
-              :items="templates"
+              :items="mihomoTemplates"
               item-title="name"
               item-value="id"
-              label="路径参考模板"
-              :disabled="templates.length === 0"
+              label="路径参考 Mihomo 模板"
+              :disabled="mihomoTemplates.length === 0"
             />
           </v-col>
           <v-col cols="12">
@@ -1614,10 +1720,10 @@ const compositeDraftHasDiff = computed(() => {
           <v-col cols="12">
             <v-select
               v-model="compositeForm.baseTemplateId"
-              :items="templates"
+              :items="mihomoTemplates"
               item-title="name"
               item-value="id"
-              label="基础模板"
+              label="Mihomo 基础模板"
             />
           </v-col>
           <v-col cols="12">

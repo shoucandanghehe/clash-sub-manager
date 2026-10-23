@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, ref, watch, type Component } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, type Component } from 'vue'
 import { useDisplay, useTheme } from 'vuetify'
 
 import MergeProfilesView from './views/MergeProfilesView.vue'
@@ -35,7 +35,7 @@ const errorOpen = ref(false)
 const navigationItems: NavigationItem[] = [
   { key: 'subscriptions', title: '订阅', subtitle: '管理远程订阅与内联配置', icon: 'mdi-rss' },
   { key: 'rules', title: '规则', subtitle: '维护规则源与查看缓存详情', icon: 'mdi-format-list-bulleted' },
-  { key: 'templates', title: '模板', subtitle: '编辑 Clash 模板 YAML', icon: 'mdi-file-document-edit-outline' },
+  { key: 'templates', title: '模板', subtitle: '编辑 Mihomo 与 sing-box 原生模板', icon: 'mdi-file-document-edit-outline' },
   { key: 'mergeProfiles', title: '合并配置', subtitle: '定义要合并的订阅与模板', icon: 'mdi-source-merge' },
   { key: 'preview', title: '预览', subtitle: '查看转换与生成结果', icon: 'mdi-eye-outline' },
 ]
@@ -91,6 +91,12 @@ function selectView(view: ViewKey): void {
   if (!display.mdAndUp.value) {
     drawer.value = false
   }
+}
+
+async function showMergeProfilePreview(): Promise<void> {
+  selectView('preview')
+  await nextTick()
+  document.getElementById('merge-profile-preview')?.scrollIntoView({ block: 'start' })
 }
 
 function toggleTheme(): void {
@@ -160,7 +166,7 @@ onMounted(async () => {
           </v-col>
         </v-row>
 
-        <component :is="activeComponent" @navigate-preview="selectView('preview')" />
+        <component :is="activeComponent" @navigate-preview="showMergeProfilePreview" />
       </v-container>
     </v-main>
 
