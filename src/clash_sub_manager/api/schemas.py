@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from ..core.singbox import SING_BOX_SCHEMA_VERSIONS
 from ..models import SubscriptionConfig
 
 
@@ -169,8 +170,8 @@ def validate_template_metadata(target: str, schema_version: str, template_format
     if target == 'mihomo' and (schema_version != '1' or template_format != 'yaml'):
         msg = 'mihomo templates require schema_version 1 and format yaml'
         raise ValueError(msg)
-    if target == 'sing-box' and (schema_version != '1.13' or template_format != 'json'):
-        msg = 'sing-box templates require schema_version 1.13 and format json'
+    if target == 'sing-box' and (schema_version not in SING_BOX_SCHEMA_VERSIONS.values() or template_format != 'json'):
+        msg = f'sing-box templates require schema_version {" or ".join(SING_BOX_SCHEMA_VERSIONS.values())} and format json'
         raise ValueError(msg)
 
 

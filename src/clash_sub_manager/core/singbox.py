@@ -1,4 +1,4 @@
-"""Strict sing-box 1.13 configuration rendering and publication."""
+"""Strict native sing-box configuration rendering and publication."""
 
 import csv
 import hashlib
@@ -18,8 +18,9 @@ import yaml
 
 from ..models.proxy import AnyTLSNode, Hysteria2Node, ProxyNodeModel, ShadowsocksNode, TrojanNode
 
-SING_BOX_COMPATIBILITY_VERSION = '1.13.14'
-SING_BOX_SCHEMA_VERSION = '1.13'
+SING_BOX_113_VERSION = '1.13.14'
+SING_BOX_114_VERSION = '1.14.3'
+SING_BOX_SCHEMA_VERSIONS = {SING_BOX_113_VERSION: '1.13', SING_BOX_114_VERSION: '1.14'}
 RULE_SET_VERSION = 4
 _RULE_BEHAVIORS = frozenset({'classical', 'domain', 'ipcidr'})
 _RULE_FIELDS = ('domain', 'domain_suffix', 'domain_keyword', 'ip_cidr', 'process_name')
@@ -74,8 +75,8 @@ class SingBoxRenderResult:
     dropped_nodes: tuple[str, ...] = ()
 
 
-class SingBox113Renderer:
-    """Render a complete native sing-box 1.13 template from canonical nodes and rule sources."""
+class SingBoxRenderer:
+    """Render native sing-box templates from canonical nodes and rule sources."""
 
     def required_rule_sources(self, template_content: str) -> tuple[RuleSetSourceSpec, ...]:
         document = self._load_template(template_content)
@@ -86,7 +87,7 @@ class SingBox113Renderer:
         template_content: str,
         nodes: Sequence[ProxyNodeModel],
         rule_source_contents: Mapping[str, str],
-        rule_set_url: Callable[[str], str],
+        rule_set_url: Callable[[RuleSetSourceSpec, str], str],
         *,
         dropped_nodes: Sequence[str] = (),
     ) -> SingBoxRenderResult:
@@ -103,14 +104,14 @@ class SingBox113Renderer:
             content = rule_source_contents.get(spec.source)
             if content is None:
                 _raise_render_error(f'rule source not found: {spec.source}')
-            artifact = self._compile_rule_set(content, spec.behavior)
+            artifact = self.compile_rule_set(content, spec.behavior)
             artifacts_by_digest.setdefault(artifact.digest, artifact)
             rule_set_definitions.append(
                 {
                     'type': 'remote',
                     'tag': spec.tag,
                     'format': 'source',
-                    'url': rule_set_url(artifact.digest),
+                    'url': rule_set_url(spec, artifact.digest),
                 }
             )
         self._replace_list_marker(document, rule_set_path, 'rule_sets', rule_set_definitions)
@@ -132,7 +133,7 @@ class SingBox113Renderer:
             _raise_render_error(f'sing-box template must be valid JSON: {exc.msg}', exc)
         if not isinstance(document, dict):
             _raise_render_error('sing-box template must decode to an object')
-        SingBox113Renderer._reject_string_interpolation(document)
+        SingBoxRenderer._reject_string_interpolation(document)
         return deepcopy(document)
 
     @staticmethod
@@ -143,11 +144,11 @@ class SingBox113Renderer:
             return
         if isinstance(value, list):
             for index, item in enumerate(value):
-                SingBox113Renderer._reject_string_interpolation(item, f'{path}[{index}]')
+                SingBoxRenderer._reject_string_interpolation(item, f'{path}[{index}]')
             return
         if isinstance(value, dict):
             for key, item in value.items():
-                SingBox113Renderer._reject_string_interpolation(item, f'{path}.{key}')
+                SingBoxRenderer._reject_string_interpolation(item, f'{path}.{key}')
 
     @staticmethod
     def _is_marker(value: object, marker: str) -> bool:
@@ -220,7 +221,7 @@ class SingBox113Renderer:
         specs: list[RuleSetSourceSpec] = []
         seen_tags: set[str] = set()
         for source_index, raw_source in enumerate(raw_sources):
-            spec = SingBox113Renderer._parse_rule_set_source(source_index, raw_source)
+            spec = SingBoxRenderer._parse_rule_set_source(source_index, raw_source)
             if spec.tag in seen_tags:
                 _raise_render_error(f'duplicate rule-set tag: {spec.tag}')
             seen_tags.add(spec.tag)
@@ -257,7 +258,7 @@ class SingBox113Renderer:
         if not isinstance(values, list):
             _raise_render_error('sing-box template route.rule_set must be an array')
         index = path[2]
-        if not SingBox113Renderer._is_marker(values[index], marker):
+        if not SingBoxRenderer._is_marker(values[index], marker):
             _raise_render_error(f'{marker} marker moved during rendering')
         values[index : index + 1] = replacements
 
@@ -270,7 +271,7 @@ class SingBox113Renderer:
             if node.name in seen_tags:
                 _raise_render_error(f'duplicate outbound tag: {node.name}')
             seen_tags.add(node.name)
-            outbound, warning = SingBox113Renderer._convert_node(node)
+            outbound, warning = SingBoxRenderer._convert_node(node)
             if warning is not None:
                 warnings.append(warning)
             outbounds.append(outbound)
@@ -281,13 +282,13 @@ class SingBox113Renderer:
     @staticmethod
     def _convert_node(node: ProxyNodeModel) -> tuple[dict[str, object], str | None]:
         if isinstance(node, ShadowsocksNode):
-            return SingBox113Renderer._convert_shadowsocks(node), None
+            return SingBoxRenderer._convert_shadowsocks(node), None
         if isinstance(node, TrojanNode):
-            return SingBox113Renderer._convert_trojan(node)
+            return SingBoxRenderer._convert_trojan(node)
         if isinstance(node, AnyTLSNode):
-            return SingBox113Renderer._convert_anytls(node)
+            return SingBoxRenderer._convert_anytls(node)
         if isinstance(node, Hysteria2Node):
-            return SingBox113Renderer._convert_hysteria2(node)
+            return SingBoxRenderer._convert_hysteria2(node)
         _raise_render_error(f'unsupported sing-box proxy node type: {node.type}')
 
     @staticmethod
@@ -382,8 +383,8 @@ class SingBox113Renderer:
 
     @staticmethod
     def _convert_hysteria2(node: Hysteria2Node) -> tuple[dict[str, object], str | None]:
-        SingBox113Renderer._reject_hysteria2_unsupported_options(node)
-        tls, warning = SingBox113Renderer._hysteria2_tls(node)
+        SingBoxRenderer._reject_hysteria2_unsupported_options(node)
+        tls, warning = SingBoxRenderer._hysteria2_tls(node)
         outbound: dict[str, object] = {
             'type': 'hysteria2',
             'tag': node.name,
@@ -394,13 +395,13 @@ class SingBox113Renderer:
         if node.ports is None:
             outbound['server_port'] = node.port
         else:
-            outbound['server_ports'] = SingBox113Renderer._hysteria2_server_ports(node.ports)
+            outbound['server_ports'] = SingBoxRenderer._hysteria2_server_ports(node.ports)
         if node.hop_interval is not None:
-            outbound['hop_interval'] = SingBox113Renderer._hysteria2_duration(node.hop_interval)
+            outbound['hop_interval'] = SingBoxRenderer._hysteria2_duration(node.hop_interval)
         if node.up is not None:
-            outbound['up_mbps'] = SingBox113Renderer._hysteria2_mbps(node.up, 'up')
+            outbound['up_mbps'] = SingBoxRenderer._hysteria2_mbps(node.up, 'up')
         if node.down is not None:
-            outbound['down_mbps'] = SingBox113Renderer._hysteria2_mbps(node.down, 'down')
+            outbound['down_mbps'] = SingBoxRenderer._hysteria2_mbps(node.down, 'down')
         if node.obfs is not None:
             if node.obfs_password is None:
                 _raise_render_error(f'hysteria2 node {node.name!r} enables obfs without a password')
@@ -450,7 +451,7 @@ class SingBox113Renderer:
         if node.realm_opts is not None:
             options.append('realm-opts')
         _raise_render_error(
-            f'hysteria2 node {node.name!r} uses options unsupported by sing-box 1.13: {", ".join(options)}'
+            f'hysteria2 node {node.name!r} uses options unsupported by the sing-box converter: {", ".join(options)}'
         )
 
     @staticmethod
@@ -476,11 +477,11 @@ class SingBox113Renderer:
             start, separator, end = entry.partition('-')
             if not start.isdecimal() or (separator and (not end.isdecimal() or '-' in end)):
                 _raise_render_error(f'invalid hysteria2 server port entry: {entry or "<empty>"}')
-            start_port = SingBox113Renderer._hysteria2_port(start)
+            start_port = SingBoxRenderer._hysteria2_port(start)
             if not separator:
                 entries.append(str(start_port))
                 continue
-            end_port = SingBox113Renderer._hysteria2_port(end)
+            end_port = SingBoxRenderer._hysteria2_port(end)
             if start_port > end_port:
                 _raise_render_error(f'invalid hysteria2 server port range: {entry}')
             entries.append(f'{start_port}:{end_port}')
@@ -510,7 +511,7 @@ class SingBox113Renderer:
         return int(amount)
 
     @staticmethod
-    def _compile_rule_set(content: str, behavior: str) -> RuleSetArtifact:
+    def compile_rule_set(content: str, behavior: str) -> RuleSetArtifact:
         try:
             document = yaml.safe_load(content)
         except yaml.YAMLError as exc:
@@ -525,17 +526,17 @@ class SingBox113Renderer:
             if not entry or entry.startswith('#'):
                 continue
             if behavior == 'domain':
-                SingBox113Renderer._compile_domain_entry(entry, values)
+                SingBoxRenderer._compile_domain_entry(entry, values)
             elif behavior == 'ipcidr':
-                values['ip_cidr'].add(SingBox113Renderer._canonical_network(entry))
+                values['ip_cidr'].add(SingBoxRenderer._canonical_network(entry))
             elif behavior == 'classical':
-                SingBox113Renderer._compile_classical_entry(entry, values)
+                SingBoxRenderer._compile_classical_entry(entry, values)
             else:
                 _raise_render_error(f'unsupported rule-set behavior: {behavior}')
         rules = [{field: sorted(values[field])} for field in _RULE_FIELDS if values[field]]
         if not rules:
             _raise_render_error('rule source produced no supported rules')
-        rendered = SingBox113Renderer._canonical_json({'version': RULE_SET_VERSION, 'rules': rules})
+        rendered = SingBoxRenderer._canonical_json({'version': RULE_SET_VERSION, 'rules': rules})
         return RuleSetArtifact(hashlib.sha256(rendered).hexdigest(), rendered)
 
     @staticmethod
@@ -561,7 +562,7 @@ class SingBox113Renderer:
         if rule_type in {'IP-CIDR', 'IP-CIDR6'}:
             if any(option != 'no-resolve' for option in options):
                 _raise_render_error(f'unsupported classical rule options: {entry}')
-            values['ip_cidr'].add(SingBox113Renderer._canonical_network(value))
+            values['ip_cidr'].add(SingBoxRenderer._canonical_network(value))
             return
         if options:
             _raise_render_error(f'unsupported classical rule options: {entry}')
@@ -587,24 +588,24 @@ class SingBox113Renderer:
     def _reject_residual_markers(value: object, path: str = '$') -> None:
         if isinstance(value, list):
             for index, item in enumerate(value):
-                SingBox113Renderer._reject_residual_markers(item, f'{path}[{index}]')
+                SingBoxRenderer._reject_residual_markers(item, f'{path}[{index}]')
             return
         if isinstance(value, dict):
             if '$csm' in value:
                 _raise_render_error(f'unsupported or misplaced $csm marker at {path}')
             for key, item in value.items():
-                SingBox113Renderer._reject_residual_markers(item, f'{path}.{key}')
+                SingBoxRenderer._reject_residual_markers(item, f'{path}.{key}')
 
     @staticmethod
     def _validate_references(document: dict[str, object]) -> None:
-        outbounds, outbound_tags = SingBox113Renderer._collect_outbounds(document)
-        endpoint_tags = SingBox113Renderer._collect_endpoint_tags(document, outbound_tags)
-        SingBox113Renderer._validate_outbound_members(outbounds, outbound_tags)
+        outbounds, outbound_tags = SingBoxRenderer._collect_outbounds(document)
+        endpoint_tags = SingBoxRenderer._collect_endpoint_tags(document, outbound_tags)
+        SingBoxRenderer._validate_outbound_members(outbounds, outbound_tags)
         route = document.get('route')
         if not isinstance(route, dict):
             _raise_render_error('sing-box route must be an object')
-        rule_set_tags = SingBox113Renderer._collect_rule_set_tags(route)
-        SingBox113Renderer._validate_route_references(route, outbound_tags | endpoint_tags, rule_set_tags)
+        rule_set_tags = SingBoxRenderer._collect_rule_set_tags(route)
+        SingBoxRenderer._validate_route_references(route, outbound_tags | endpoint_tags, rule_set_tags)
 
     @staticmethod
     def _collect_outbounds(document: dict[str, object]) -> tuple[list[dict[str, object]], set[str]]:
@@ -678,7 +679,7 @@ class SingBox113Renderer:
         if not isinstance(rules, list):
             _raise_render_error('sing-box route.rules must be an array')
         for index, rule in enumerate(rules):
-            SingBox113Renderer._validate_route_rule(index, rule, route_tags, rule_set_tags)
+            SingBoxRenderer._validate_route_rule(index, rule, route_tags, rule_set_tags)
 
     @staticmethod
     def _validate_route_rule(
@@ -751,9 +752,16 @@ class SingBoxArtifactStore:
 class SingBoxValidator:
     """Verify a pinned sing-box binary and validate every published configuration."""
 
-    def __init__(self, binary: Path, expected_sha256: str):
+    def __init__(
+        self,
+        binary: Path,
+        expected_sha256: str,
+        *,
+        compatibility_version: str = SING_BOX_113_VERSION,
+    ):
         self.binary = binary
         self.expected_sha256 = expected_sha256.lower()
+        self.compatibility_version = compatibility_version
         self._verified = False
         self._lock = threading.Lock()
 
@@ -821,22 +829,23 @@ class SingBoxValidator:
                 _raise_binary_unavailable('sing-box binary SHA-256 does not match configured digest')
             result = self._run(['version'])
             version_output = f'{result.stdout}\n{result.stderr}'
-            if result.returncode != 0 or SING_BOX_COMPATIBILITY_VERSION not in version_output:
-                _raise_binary_unavailable(f'sing-box binary version must contain {SING_BOX_COMPATIBILITY_VERSION}')
+            if result.returncode != 0 or self.compatibility_version not in version_output:
+                _raise_binary_unavailable(f'sing-box binary version must contain {self.compatibility_version}')
             self._verified = True
 
 
 __all__ = [
     'RULE_SET_VERSION',
-    'SING_BOX_COMPATIBILITY_VERSION',
-    'SING_BOX_SCHEMA_VERSION',
+    'SING_BOX_113_VERSION',
+    'SING_BOX_114_VERSION',
+    'SING_BOX_SCHEMA_VERSIONS',
     'RuleSetArtifact',
     'RuleSetSourceSpec',
-    'SingBox113Renderer',
     'SingBoxArtifactStore',
     'SingBoxBinaryUnavailableError',
     'SingBoxConfigValidationError',
     'SingBoxRenderError',
     'SingBoxRenderResult',
+    'SingBoxRenderer',
     'SingBoxValidator',
 ]

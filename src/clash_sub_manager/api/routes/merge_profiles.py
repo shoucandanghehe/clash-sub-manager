@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -17,13 +18,13 @@ from ...core.merger import SubscriptionMerger
 from ...core.rules import RuleManager, RuleUpdateError
 from ...core.singbox import (
     RULE_SET_VERSION,
-    SING_BOX_COMPATIBILITY_VERSION,
-    SING_BOX_SCHEMA_VERSION,
+    SING_BOX_113_VERSION,
+    SING_BOX_SCHEMA_VERSIONS,
     RuleSetSourceSpec,
-    SingBox113Renderer,
     SingBoxArtifactStore,
     SingBoxBinaryUnavailableError,
     SingBoxConfigValidationError,
+    SingBoxRenderer,
     SingBoxRenderError,
     SingBoxRenderResult,
     SingBoxValidator,
@@ -49,6 +50,12 @@ from ._rule_providers import build_cached_rule_provider_urls
 router = APIRouter(tags=['merge-profiles'])
 DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 _SHA256_HEX_LENGTH = 64
+
+
+@dataclass(frozen=True, slots=True)
+class CachedRuleSource:
+    id: int
+    content: str
 
 
 def _utc_now() -> datetime:
@@ -363,20 +370,21 @@ async def upsert_sing_box_target(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail='template target must be sing-box',
         )
-    if template.schema_version != '1.13':
+    schema_version = SING_BOX_SCHEMA_VERSIONS.get(payload.compatibility_version)
+    if schema_version is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail='sing-box template schema version must be 1.13',
+            detail=f'sing-box compatibility version must be {" or ".join(SING_BOX_SCHEMA_VERSIONS)}',
+        )
+    if template.schema_version != schema_version:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f'sing-box template schema version must be {schema_version}',
         )
     if template.format != 'json':
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail='sing-box template format must be json',
-        )
-    if payload.compatibility_version != '1.13.14':
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail='sing-box compatibility version must be 1.13.14',
         )
 
     binding = await db.scalar(
@@ -432,7 +440,7 @@ async def _get_sing_box_profile(
 async def _resolve_sing_box_rule_sources(
     specs: tuple[RuleSetSourceSpec, ...],
     db: AsyncSession,
-) -> dict[str, str]:
+) -> dict[str, CachedRuleSource]:
     source_names = {spec.source for spec in specs}
     sources = list((await db.scalars(select(RuleSource).where(RuleSource.name.in_(source_names)))).all())
     source_by_name = {source.name: source for source in sources}
@@ -440,13 +448,12 @@ async def _resolve_sing_box_rule_sources(
     if missing:
         message = f'rule sources not found: {", ".join(missing)}'
         raise SingBoxRenderError(message)
-    contents: dict[str, str] = {}
-    for name in source_names:
-        source = source_by_name[name]
-        if source.content is None:
-            contents[name] = await RuleManager().update_rule_source(db, source)
-        else:
-            contents[name] = source.content
+    contents: dict[str, CachedRuleSource] = {}
+    for name, source in source_by_name.items():
+        content = source.content
+        if content is None:
+            content = await RuleManager().update_rule_source(db, source)
+        contents[name] = CachedRuleSource(source.id, content)
     return contents
 
 
@@ -456,27 +463,41 @@ async def _render_sing_box_profile(
     request: Request,
     db: AsyncSession,
 ) -> SingBoxRenderResult:
-    validator: SingBoxValidator | None = request.app.state.sing_box_validator
+    validators: dict[str, SingBoxValidator] = request.app.state.sing_box_validators
+    validator = validators.get(binding.compatibility_version)
     if validator is None:
-        message = 'sing-box validator is not configured'
+        message = f'sing-box validator for {binding.compatibility_version} is not configured'
         raise SingBoxBinaryUnavailableError(message)
     store: SingBoxArtifactStore = request.app.state.sing_box_store
-    renderer = SingBox113Renderer()
+    renderer = SingBoxRenderer()
     specs = renderer.required_rule_sources(binding.template.content)
-    rule_source_contents = await _resolve_sing_box_rule_sources(specs, db)
+    sources = await _resolve_sing_box_rule_sources(specs, db)
     configs = await _resolve_merge_profile_configs(merge_profile, db, refresh_remote=False)
     resolution = await SubscriptionMerger(configs, allow_empty=True).resolve()
+
+    def rule_set_url(spec: RuleSetSourceSpec, digest: str) -> str:
+        if binding.compatibility_version == SING_BOX_113_VERSION:
+            return str(request.url_for('get_sing_box_rule_set', digest=digest))
+        return str(
+            request.url_for(
+                'get_sing_box_rule_provider',
+                rule_source_id=sources[spec.source].id,
+                behavior=spec.behavior,
+            ).include_query_params(compat=binding.compatibility_version),
+        )
+
     result = renderer.render(
         binding.template.content,
         resolution.nodes,
-        rule_source_contents,
-        lambda digest: str(request.url_for('get_sing_box_rule_set', digest=digest)),
+        {name: source.content for name, source in sources.items()},
+        rule_set_url,
         dropped_nodes=resolution.dropped_nodes,
     )
     for artifact in result.rule_sets:
         await asyncio.to_thread(validator.check_rule_set, artifact.content, store.root / 'tmp')
-    for artifact in result.rule_sets:
-        store.publish_rule_set(artifact)
+    if binding.compatibility_version == SING_BOX_113_VERSION:
+        for artifact in result.rule_sets:
+            store.publish_rule_set(artifact)
     await asyncio.to_thread(validator.check, result.content, store.root / 'tmp')
     store.publish_config(merge_profile.public_id, result.content)
     return result
@@ -489,16 +510,17 @@ async def get_sing_box_profile_config(
     db: DbSession,
     compat: Annotated[str, Query()],
 ) -> Response:
-    if compat != SING_BOX_COMPATIBILITY_VERSION:
+    schema_version = SING_BOX_SCHEMA_VERSIONS.get(compat)
+    if schema_version is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f'sing-box compatibility version must be {SING_BOX_COMPATIBILITY_VERSION}',
+            detail=f'sing-box compatibility version must be {" or ".join(SING_BOX_SCHEMA_VERSIONS)}',
         )
     merge_profile, binding = await _get_sing_box_profile(public_id, db)
     template = binding.template
     if binding.compatibility_version != compat:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail='target version mismatch')
-    if template.target != 'sing-box' or template.schema_version != SING_BOX_SCHEMA_VERSION or template.format != 'json':
+    if template.target != 'sing-box' or template.schema_version != schema_version or template.format != 'json':
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail='target template metadata mismatch'
         )

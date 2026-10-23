@@ -1,7 +1,7 @@
 """FastAPI application wiring."""
 
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 
@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .. import __version__
-from ..core.singbox import SingBoxArtifactStore, SingBoxValidator
+from ..core.singbox import SING_BOX_113_VERSION, SING_BOX_114_VERSION, SingBoxArtifactStore, SingBoxValidator
 from ..db import create_engine, default_db_path, default_db_url, init_db, normalize_async_db_url
 from .routes import api_router
 
@@ -49,9 +49,10 @@ def create_app(
     db_url: str | None = None,
     sing_box_binary: str | Path | None = None,
     sing_box_sha256: str | None = None,
+    sing_box_validators: Sequence[SingBoxValidator] = (),
     sing_box_artifact_dir: str | Path | None = None,
 ) -> FastAPI:
-    """Create the application instance."""
+    """Create the app with independently pinned sing-box 1.13 and 1.14 validators."""
 
     normalized_db_url = normalize_async_db_url(db_url or default_db_url())
     app = FastAPI(title='Clash Sub Manager', version=__version__, lifespan=_build_lifespan(normalized_db_url))
@@ -60,12 +61,23 @@ def create_app(
         or os.environ.get('CLASH_SUB_MANAGER_SING_BOX_ARTIFACT_DIR')
         or default_db_path().parent / 'sing-box'
     )
-    binary_value = sing_box_binary or os.environ.get('CLASH_SUB_MANAGER_SING_BOX_BINARY')
-    expected_sha256 = sing_box_sha256 or os.environ.get('CLASH_SUB_MANAGER_SING_BOX_SHA256')
     app.state.sing_box_store = SingBoxArtifactStore(artifact_dir)
-    app.state.sing_box_validator = (
-        SingBoxValidator(Path(binary_value), expected_sha256) if binary_value is not None and expected_sha256 else None
-    )
+    validators = {validator.compatibility_version: validator for validator in sing_box_validators}
+    for version, binary, digest in (
+        (
+            SING_BOX_113_VERSION,
+            sing_box_binary or os.environ.get('CLASH_SUB_MANAGER_SING_BOX_BINARY'),
+            sing_box_sha256 or os.environ.get('CLASH_SUB_MANAGER_SING_BOX_SHA256'),
+        ),
+        (
+            SING_BOX_114_VERSION,
+            os.environ.get('CLASH_SUB_MANAGER_SING_BOX_114_BINARY'),
+            os.environ.get('CLASH_SUB_MANAGER_SING_BOX_114_SHA256'),
+        ),
+    ):
+        if version not in validators and binary is not None and digest:
+            validators[version] = SingBoxValidator(Path(binary), digest, compatibility_version=version)
+    app.state.sing_box_validators = validators
     app.include_router(api_router)
     webui_dir = _resolve_webui_dir()
     if webui_dir is not None:

@@ -8,7 +8,8 @@ import yaml
 from fastapi.testclient import TestClient
 
 from clash_sub_manager.api import create_app
-from clash_sub_manager.core import SubscriptionFetcher, SubscriptionFetchError
+from clash_sub_manager.core import RuleManager, SubscriptionFetcher, SubscriptionFetchError
+from clash_sub_manager.core.singbox import SingBoxValidator
 
 
 @pytest.fixture
@@ -23,31 +24,39 @@ def client(tmp_path: pathlib.Path) -> Iterator[TestClient]:
 def sing_box_client(tmp_path: pathlib.Path) -> Iterator[TestClient]:
     db_path = pathlib.Path(tmp_path) / 'sing-box-api.db'
     artifact_dir = pathlib.Path(tmp_path) / 'sing-box-artifacts'
-    binary_path = pathlib.Path(tmp_path) / 'sing-box'
-    binary_path.write_text(
-        '#!/usr/bin/env python3\n'
-        'import json\n'
-        'import pathlib\n'
-        'import sys\n'
-        'if sys.argv[1:] == ["version"]:\n'
-        '    print("sing-box version 1.13.14-test")\n'
-        '    raise SystemExit(0)\n'
-        'if len(sys.argv) == 4 and sys.argv[1:3] == ["check", "-c"]:\n'
-        '    json.loads(pathlib.Path(sys.argv[3]).read_text())\n'
-        '    raise SystemExit(0)\n'
-        'if len(sys.argv) == 6 and sys.argv[1:4] == ["rule-set", "compile", "--output"]:\n'
-        '    json.loads(pathlib.Path(sys.argv[5]).read_text())\n'
-        '    pathlib.Path(sys.argv[4]).write_bytes(b"srs")\n'
-        '    raise SystemExit(0)\n'
-        'raise SystemExit(2)\n',
-        encoding='utf-8',
-    )
-    binary_path.chmod(0o755)
-    binary_sha256 = hashlib.sha256(binary_path.read_bytes()).hexdigest()
+    binary_paths = {version: tmp_path / f'sing-box-{version}' for version in ('1.13.14', '1.14.3')}
+    for version, binary_path in binary_paths.items():
+        binary_path.write_text(
+            '#!/usr/bin/env python3\n'
+            'import json\n'
+            'import pathlib\n'
+            'import sys\n'
+            'if sys.argv[1:] == ["version"]:\n'
+            f'    print("sing-box version {version}-test")\n'
+            '    raise SystemExit(0)\n'
+            'if len(sys.argv) == 4 and sys.argv[1:3] == ["check", "-c"]:\n'
+            '    json.loads(pathlib.Path(sys.argv[3]).read_text())\n'
+            '    pathlib.Path(sys.argv[0] + ".checked").write_text("checked")\n'
+            '    raise SystemExit(0)\n'
+            'if len(sys.argv) == 6 and sys.argv[1:4] == ["rule-set", "compile", "--output"]:\n'
+            '    json.loads(pathlib.Path(sys.argv[5]).read_text())\n'
+            '    pathlib.Path(sys.argv[4]).write_bytes(b"srs")\n'
+            '    raise SystemExit(0)\n'
+            'raise SystemExit(2)\n',
+            encoding='utf-8',
+        )
+        binary_path.chmod(0o755)
     app = create_app(
         db_url=f'sqlite:///{db_path}',
-        sing_box_binary=binary_path,
-        sing_box_sha256=binary_sha256,
+        sing_box_binary=binary_paths['1.13.14'],
+        sing_box_sha256=hashlib.sha256(binary_paths['1.13.14'].read_bytes()).hexdigest(),
+        sing_box_validators=[
+            SingBoxValidator(
+                binary_paths['1.14.3'],
+                hashlib.sha256(binary_paths['1.14.3'].read_bytes()).hexdigest(),
+                compatibility_version='1.14.3',
+            ),
+        ],
         sing_box_artifact_dir=artifact_dir,
     )
     with TestClient(app) as test_client:
@@ -75,6 +84,7 @@ def _create_sing_box_target(
     name: str,
     subscription_content: str,
     template_document: dict[str, object],
+    compatibility_version: str = '1.13.14',
 ) -> dict[str, object]:
     subscription = client.post(
         '/subscriptions',
@@ -86,7 +96,7 @@ def _create_sing_box_target(
             'name': f'{name}-template',
             'content': json.dumps(template_document),
             'target': 'sing-box',
-            'schema_version': '1.13',
+            'schema_version': compatibility_version.rsplit('.', 1)[0],
             'format': 'json',
         },
     ).json()
@@ -96,7 +106,7 @@ def _create_sing_box_target(
     ).json()
     response = client.put(
         f'/merge-profiles/{profile["id"]}/targets/sing-box',
-        json={'compatibility_version': '1.13.14', 'template_id': template['id']},
+        json={'compatibility_version': compatibility_version, 'template_id': template['id']},
     )
     assert response.status_code == 200
     return profile
@@ -363,7 +373,7 @@ def test_sing_box_target_rejects_target_version_and_template_mismatches(client: 
         json={'compatibility_version': '1.12.0', 'template_id': sing_box_template['id']},
     )
     assert wrong_version.status_code == 422
-    assert wrong_version.json() == {'detail': 'sing-box compatibility version must be 1.13.14'}
+    assert wrong_version.json() == {'detail': 'sing-box compatibility version must be 1.13.14 or 1.14.3'}
 
 
 def test_template_target_metadata_must_be_coherent(client: TestClient) -> None:
@@ -380,8 +390,52 @@ def test_template_target_metadata_must_be_coherent(client: TestClient) -> None:
 
     assert response.status_code == 422
     assert response.json()['detail'][0]['msg'].endswith(
-        'sing-box templates require schema_version 1.13 and format json'
+        'sing-box templates require schema_version 1.13 or 1.14 and format json'
     )
+
+
+@pytest.mark.parametrize(
+    ('schema_version', 'compatibility_version', 'other_version'),
+    [('1.13', '1.13.14', '1.14.3'), ('1.14', '1.14.3', '1.13.14')],
+)
+def test_sing_box_target_requires_matching_template_version(
+    client: TestClient,
+    schema_version: str,
+    compatibility_version: str,
+    other_version: str,
+) -> None:
+    subscription = client.post(
+        '/subscriptions',
+        json={'name': 'versioned-nodes', 'content': 'trojan://secret@example.com:443#Versioned'},
+    ).json()
+    profile = client.post(
+        '/merge-profiles',
+        json={'name': 'versioned-profile', 'subscription_ids': [subscription['id']]},
+    ).json()
+    template_response = client.post(
+        '/templates',
+        json={
+            'name': 'versioned-template',
+            'content': json.dumps(_minimal_sing_box_template()),
+            'target': 'sing-box',
+            'schema_version': schema_version,
+            'format': 'json',
+        },
+    )
+    assert template_response.status_code == 201
+    template_id = template_response.json()['id']
+    binding_url = f'/merge-profiles/{profile["id"]}/targets/sing-box'
+    mismatch = client.put(binding_url, json={'compatibility_version': other_version, 'template_id': template_id})
+    assert mismatch.status_code == 422
+    binding = client.put(
+        binding_url,
+        json={'compatibility_version': compatibility_version, 'template_id': template_id},
+    )
+    assert binding.status_code == 200
+    assert binding.json()['compatibility_version'] == compatibility_version
+    config_url = f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json'
+    assert client.get(config_url, params={'compat': other_version}).status_code == 422
+    assert client.get(config_url, params={'compat': compatibility_version}).status_code == 503
 
 
 def test_sing_box_templates_cannot_use_composites(client: TestClient) -> None:
@@ -405,7 +459,17 @@ def test_sing_box_templates_cannot_use_composites(client: TestClient) -> None:
     assert response.json() == {'detail': 'sing-box templates do not support patches or composites'}
 
 
-def test_sing_box_target_returns_valid_complete_json(sing_box_client: TestClient) -> None:
+@pytest.mark.parametrize(
+    ('schema_version', 'compatibility_version', 'other_version'),
+    [('1.13', '1.13.14', '1.14.3'), ('1.14', '1.14.3', '1.13.14')],
+)
+def test_sing_box_target_returns_valid_complete_json(
+    sing_box_client: TestClient,
+    tmp_path: pathlib.Path,
+    schema_version: str,
+    compatibility_version: str,
+    other_version: str,
+) -> None:
     rule_source = sing_box_client.post(
         '/rule-sources',
         json={
@@ -478,6 +542,7 @@ def test_sing_box_target_returns_valid_complete_json(sing_box_client: TestClient
             'rules': [{'rule_set': ['domains'], 'action': 'route', 'outbound': 'proxy'}],
             'final': 'proxy',
             'auto_detect_interface': True,
+            'default_domain_resolver': 'dns-local',
         },
     }
     template = sing_box_client.post(
@@ -486,7 +551,7 @@ def test_sing_box_target_returns_valid_complete_json(sing_box_client: TestClient
             'name': 'native-sing-box',
             'content': json.dumps(template_document),
             'target': 'sing-box',
-            'schema_version': '1.13',
+            'schema_version': schema_version,
             'format': 'json',
         },
     ).json()
@@ -496,17 +561,19 @@ def test_sing_box_target_returns_valid_complete_json(sing_box_client: TestClient
     ).json()
     binding_response = sing_box_client.put(
         f'/merge-profiles/{profile["id"]}/targets/sing-box',
-        json={'compatibility_version': '1.13.14', 'template_id': template['id']},
+        json={'compatibility_version': compatibility_version, 'template_id': template['id']},
     )
     assert binding_response.status_code == 200
 
     config_response = sing_box_client.get(
         f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json',
-        params={'compat': '1.13.14'},
+        params={'compat': compatibility_version},
     )
     assert config_response.status_code == 200
     assert config_response.headers['content-type'].startswith('application/json')
     assert config_response.headers['x-csm-warning-count'] == '1'
+    assert (tmp_path / f'sing-box-{compatibility_version}.checked').is_file()
+    assert not (tmp_path / f'sing-box-{other_version}.checked').exists()
     config = config_response.json()
     node_outbounds = [outbound for outbound in config['outbounds'] if outbound['type'] not in {'selector', 'direct'}]
     assert [outbound['tag'] for outbound in node_outbounds] == ['SS Obfs', 'Trojan Secure', 'AnyTLS']
@@ -517,11 +584,47 @@ def test_sing_box_target_returns_valid_complete_json(sing_box_client: TestClient
     assert selector['outbounds'] == ['SS Obfs', 'Trojan Secure', 'AnyTLS']
     rule_set = config['route']['rule_set'][0]
     assert rule_set['format'] == 'source'
-    assert rule_set['url'].startswith('http://testserver/api/v1/sing-box/rule-sets/v4/')
+    if compatibility_version == '1.13.14':
+        assert rule_set['url'].startswith('http://testserver/api/v1/sing-box/rule-sets/v4/')
+    else:
+        assert rule_set['url'] == (
+            f'http://testserver/api/v1/sing-box/rule-providers/{rule_source["id"]}/domain.json?compat=1.14.3'
+        )
 
     rule_set_response = sing_box_client.get(rule_set['url'])
     assert rule_set_response.status_code == 200
     assert rule_set_response.json() == {'version': 4, 'rules': [{'domain_suffix': ['example.com']}]}
+
+
+@pytest.mark.usefixtures('sing_box_client')
+def test_sing_box_114_target_never_falls_back_to_113_validator(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv('CLASH_SUB_MANAGER_SING_BOX_114_BINARY', raising=False)
+    monkeypatch.delenv('CLASH_SUB_MANAGER_SING_BOX_114_SHA256', raising=False)
+    binary_path = tmp_path / 'sing-box-1.13.14'
+    app = create_app(
+        db_url=f'sqlite:///{tmp_path / "legacy-validator.db"}',
+        sing_box_binary=binary_path,
+        sing_box_sha256=hashlib.sha256(binary_path.read_bytes()).hexdigest(),
+        sing_box_artifact_dir=tmp_path / 'legacy-validator-artifacts',
+    )
+    with TestClient(app) as legacy_client:
+        profile = _create_sing_box_target(
+            legacy_client,
+            name='missing-114-validator',
+            subscription_content='trojan://secret@example.com:443#Versioned',
+            template_document=_minimal_sing_box_template(),
+            compatibility_version='1.14.3',
+        )
+        response = legacy_client.get(
+            f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json',
+            params={'compat': '1.14.3'},
+        )
+    assert response.status_code == 503
+    assert response.json()['detail'] == 'sing-box validator for 1.14.3 is not configured'
+    assert not (tmp_path / 'sing-box-1.13.14.checked').exists()
 
 
 def test_sing_box_client_pull_uses_cached_subscription(
@@ -715,7 +818,11 @@ def test_sing_box_target_rejects_unsupported_nodes_and_plugins(
     assert response.json()['detail'] == expected_detail
 
 
-def test_sing_box_rule_set_digest_urls_are_immutable(sing_box_client: TestClient) -> None:
+@pytest.mark.parametrize('compatibility_version', ['1.13.14', '1.14.3'])
+def test_sing_box_rule_set_urls_preserve_versioned_update_contract(
+    sing_box_client: TestClient,
+    compatibility_version: str,
+) -> None:
     rule_source = sing_box_client.post(
         '/rule-sources',
         json={
@@ -736,10 +843,11 @@ def test_sing_box_rule_set_digest_urls_are_immutable(sing_box_client: TestClient
         name='digest-profile',
         subscription_content='trojan://secret@example.com:443#Digest',
         template_document=template_document,
+        compatibility_version=compatibility_version,
     )
     config_url = f'/api/v1/merge-profiles/{profile["public_id"]}/targets/sing-box/config.json'
 
-    first_config = sing_box_client.get(config_url, params={'compat': '1.13.14'}).json()
+    first_config = sing_box_client.get(config_url, params={'compat': compatibility_version}).json()
     first_url = first_config['route']['rule_set'][0]['url']
     first_content = sing_box_client.get(first_url).json()
 
@@ -748,15 +856,54 @@ def test_sing_box_rule_set_digest_urls_are_immutable(sing_box_client: TestClient
         json={'content': "payload:\n  - '+.second.example'\n"},
     )
     assert update_response.status_code == 200
-    second_config = sing_box_client.get(config_url, params={'compat': '1.13.14'}).json()
+    updated_content = {'version': 4, 'rules': [{'domain_suffix': ['second.example']}]}
+    if compatibility_version == '1.14.3':
+        assert sing_box_client.get(first_url).json() == updated_content
+    else:
+        assert sing_box_client.get(first_url).json() == first_content
+    second_config = sing_box_client.get(config_url, params={'compat': compatibility_version}).json()
     second_url = second_config['route']['rule_set'][0]['url']
 
-    assert first_url != second_url
-    assert sing_box_client.get(first_url).json() == first_content
-    assert sing_box_client.get(second_url).json() == {
-        'version': 4,
-        'rules': [{'domain_suffix': ['second.example']}],
-    }
+    if compatibility_version == '1.13.14':
+        assert first_url != second_url
+        assert sing_box_client.get(first_url).json() == first_content
+    else:
+        assert first_url == second_url
+    assert sing_box_client.get(second_url).json() == updated_content
+
+
+@pytest.mark.parametrize('auto_update', [False, True])
+def test_sing_box_rule_provider_preserves_source_refresh_policy(
+    sing_box_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    auto_update: bool,
+) -> None:
+    calls = 0
+
+    async def fake_fetch(_manager: RuleManager, url: str) -> str:
+        nonlocal calls
+        assert url == 'https://example.com/live-rules'
+        calls += 1
+        return f"payload:\n  - '+.fresh-{calls}.example'\n"
+
+    monkeypatch.setattr(RuleManager, 'fetch_remote_content', fake_fetch)
+    source = sing_box_client.post(
+        '/rule-sources',
+        json={
+            'name': 'live-rules',
+            'url': 'https://example.com/live-rules',
+            'auto_update': auto_update,
+            'content': "payload:\n  - '+.cached.example'\n",
+        },
+    ).json()
+    url = f'/api/v1/sing-box/rule-providers/{source["id"]}/domain.json?compat=1.14.3'
+    for request_number in (1, 2):
+        response = sing_box_client.get(url)
+        assert response.status_code == 200
+        expected_domain = f'fresh-{request_number}.example' if auto_update else 'cached.example'
+        assert response.json() == {'version': 4, 'rules': [{'domain_suffix': [expected_domain]}]}
+    assert calls == (2 if auto_update else 0)
 
 
 def test_merge_profile_crud_and_generate(client: TestClient) -> None:

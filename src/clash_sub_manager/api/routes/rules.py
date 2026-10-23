@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+import asyncio
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.rules import RuleManager
+from ...core.rules import RuleManager, RuleUpdateError
+from ...core.singbox import (
+    RULE_SET_VERSION,
+    SING_BOX_SCHEMA_VERSIONS,
+    SingBoxArtifactStore,
+    SingBoxBinaryUnavailableError,
+    SingBoxConfigValidationError,
+    SingBoxRenderer,
+    SingBoxRenderError,
+    SingBoxValidator,
+)
 from ...db.models import RuleSource
 from ..dependencies import get_db_session
 from ..schemas import RuleSourceCreate, RuleSourceRead, RuleSourceUpdate
@@ -83,6 +94,52 @@ async def get_cached_rule_provider(rule_source_id: int, db: DbSession) -> PlainT
     if rule_source.auto_update or content is None:
         content = await RuleManager().update_rule_source(db, rule_source)
     return PlainTextResponse(content)
+
+
+@router.get(
+    '/api/v1/sing-box/rule-providers/{rule_source_id}/{behavior}.json',
+    name='get_sing_box_rule_provider',
+)
+async def get_sing_box_rule_provider(
+    rule_source_id: int,
+    behavior: Literal['classical', 'domain', 'ipcidr'],
+    request: Request,
+    db: DbSession,
+    compat: Annotated[str, Query()],
+) -> Response:
+    if compat not in SING_BOX_SCHEMA_VERSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f'sing-box compatibility version must be {" or ".join(SING_BOX_SCHEMA_VERSIONS)}',
+        )
+    validators: dict[str, SingBoxValidator] = request.app.state.sing_box_validators
+    validator = validators.get(compat)
+    if validator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f'sing-box validator for {compat} is not configured',
+        )
+    rule_source = await db.get(RuleSource, rule_source_id)
+    if rule_source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='rule source not found')
+    store: SingBoxArtifactStore = request.app.state.sing_box_store
+    try:
+        content = rule_source.content
+        if rule_source.auto_update or content is None:
+            content = await RuleManager().update_rule_source(db, rule_source)
+        artifact = await asyncio.to_thread(SingBoxRenderer.compile_rule_set, content, behavior)
+        await asyncio.to_thread(validator.check_rule_set, artifact.content, store.root / 'tmp')
+    except RuleUpdateError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except SingBoxBinaryUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except (SingBoxConfigValidationError, SingBoxRenderError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return Response(
+        content=artifact.content,
+        media_type='application/json',
+        headers={'X-Rule-Set-Version': str(RULE_SET_VERSION)},
+    )
 
 
 @router.get('/rules')

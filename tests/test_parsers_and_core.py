@@ -20,7 +20,7 @@ from clash_sub_manager.core import (
     TemplateComposer,
     TemplateProcessor,
 )
-from clash_sub_manager.core.singbox import SingBox113Renderer, SingBoxRenderError
+from clash_sub_manager.core.singbox import SingBoxRenderer, SingBoxRenderError
 from clash_sub_manager.db import Template, TemplatePatch
 from clash_sub_manager.models import SubscriptionConfig
 from clash_sub_manager.parsers import ClashParser, ProxyParser
@@ -406,11 +406,11 @@ proxies:
         },
     }
 
-    result = SingBox113Renderer().render(
+    result = SingBoxRenderer().render(
         json.dumps(template),
         nodes,
         {},
-        lambda digest: f'https://example.com/rules/{digest}',
+        lambda _spec, digest: f'https://example.com/rules/{digest}',
     )
     document = json.loads(result.content)
 
@@ -436,7 +436,7 @@ proxies:
     assert result.warnings == ("hysteria2 node 'Hysteria2' enables tls.insecure",)
 
 
-def test_sing_box_renderer_rejects_hysteria2_1_14_only_options() -> None:
+def test_sing_box_renderer_rejects_unimplemented_hysteria2_options() -> None:
     nodes = ProxyParser.parse_subscription(
         """
 proxies:
@@ -476,15 +476,15 @@ proxies:
     with pytest.raises(
         SingBoxRenderError,
         match=(
-            r'options unsupported by sing-box 1\.13: bbr-profile, fingerprint, name-cert-verify, obfs=gecko, '
+            r'options unsupported by the sing-box converter: bbr-profile, fingerprint, name-cert-verify, obfs=gecko, '
             r'obfs-max-packet-size, obfs-min-packet-size, QUIC receive windows, realm-opts'
         ),
     ):
-        SingBox113Renderer().render(
+        SingBoxRenderer().render(
             json.dumps(template),
             nodes,
             {},
-            lambda digest: f'https://example.com/rules/{digest}',
+            lambda _spec, digest: f'https://example.com/rules/{digest}',
         )
 
 
